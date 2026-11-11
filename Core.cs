@@ -1263,6 +1263,7 @@ public sealed class LogFile(string name)
 
     static string ChoosePath(string name)
     {
+        if (Environment.GetEnvironmentVariable("NYADOWNLOADER_LOGS") is { Length: > 0 } logs) return Path.Combine(logs, name);
         // Nothing may be written inside a macOS app bundle (it would break its signature), so logs go where macOS keeps them.
         if (OperatingSystem.IsMacOS())
             return Path.Combine(AppInfo.DataDirOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Logs", AppInfo.Name), name);
