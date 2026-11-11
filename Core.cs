@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -792,42 +793,61 @@ public static class YtDlp
 
     static string[] LocalDirs => [AppContext.BaseDirectory, ToolsDir];
 
+    // The tools are called yt-dlp.exe, ffmpeg.exe... on Windows and have no extension on macOS.
+    public static string Exe(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
+
     public sealed record Engine(string File, string[] Prefix, string Description);
 
     public static Engine Locate()
     {
+        var exe = Exe("yt-dlp");
         foreach (var (dir, where) in new[] { (AppContext.BaseDirectory, "next to the app"), (ToolsDir, "installed components") })
-            if (File.Exists(Path.Combine(dir, "yt-dlp.exe")))
-                return new(Path.Combine(dir, "yt-dlp.exe"), [], $"yt-dlp.exe ({where})");
+            if (File.Exists(Path.Combine(dir, exe)))
+                return new(Path.Combine(dir, exe), [], $"{exe} ({where})");
+        // On macOS python3 may be only the stub that asks to install the developer tools, so use a yt-dlp on PATH
+        // (Homebrew, pip) or report it missing.
+        if (!OperatingSystem.IsWindows())
+            return FindOnPath(exe) is { } found ? new(found, [], $"{exe} ({found})") : new(exe, [], exe);
         return new("python", ["-m", "yt_dlp"], "python -m yt_dlp");
+    }
+
+    // Apps started from Finder get a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin), so tools installed with Homebrew
+    // would be found neither by the app nor by yt-dlp when it looks for ffmpeg and a JavaScript runtime.
+    public static void AddHomebrewToPath()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        var dirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries).ToList();
+        foreach (var dir in new[] { "/opt/homebrew/bin", "/usr/local/bin" })
+            if (!dirs.Contains(dir) && Directory.Exists(dir)) dirs.Add(dir);
+        Environment.SetEnvironmentVariable("PATH", string.Join(':', dirs));
     }
 
     public static bool UsesPython => Locate().Prefix.Length > 0;
 
     static bool HasExe(string dir, string exe) => File.Exists(Path.Combine(dir, exe));
-    static bool HasBoth(string dir) => HasExe(dir, "ffmpeg.exe") && HasExe(dir, "ffprobe.exe");
+    static bool HasBoth(string dir) => HasExe(dir, Exe("ffmpeg")) && HasExe(dir, Exe("ffprobe"));
 
     public static string? FfmpegDirArgument()
     {
-        bool onPath = FindOnPath("ffmpeg.exe") != null;
-        if (onPath && FindOnPath("ffprobe.exe") != null) return null;
-        var dir = LocalDirs.FirstOrDefault(HasBoth) ?? (onPath ? null : LocalDirs.FirstOrDefault(d => HasExe(d, "ffmpeg.exe")));
-        return dir?.TrimEnd('\\');
+        bool onPath = FindOnPath(Exe("ffmpeg")) != null;
+        if (onPath && FindOnPath(Exe("ffprobe")) != null) return null;
+        var dir = LocalDirs.FirstOrDefault(HasBoth) ?? (onPath ? null : LocalDirs.FirstOrDefault(d => HasExe(d, Exe("ffmpeg"))));
+        return dir?.TrimEnd(Path.DirectorySeparatorChar);
     }
 
-    public static string FfmpegExe() => FfmpegDirArgument() is { } dir ? Path.Combine(dir, "ffmpeg.exe") : FindOnPath("ffmpeg.exe") ?? "ffmpeg.exe";
+    public static string FfmpegExe() => FfmpegDirArgument() is { } dir ? Path.Combine(dir, Exe("ffmpeg")) : FindOnPath(Exe("ffmpeg")) ?? Exe("ffmpeg");
 
     public static bool HasFfmpeg() =>
-        FindOnPath("ffmpeg.exe") != null && FindOnPath("ffprobe.exe") != null || LocalDirs.Any(HasBoth);
+        FindOnPath(Exe("ffmpeg")) != null && FindOnPath(Exe("ffprobe")) != null || LocalDirs.Any(HasBoth);
 
     public static string? JsRuntimeArgument()
     {
-        if (FindOnPath("node.exe") != null) return "node";
-        var deno = Path.Combine(ToolsDir, "deno.exe");
+        if (FindOnPath(Exe("node")) != null) return "node";
+        var deno = Path.Combine(ToolsDir, Exe("deno"));
         return File.Exists(deno) ? "deno:" + deno : null;
     }
 
-    public static bool HasJsRuntime() => JsRuntimeArgument() != null || FindOnPath("deno.exe") != null;
+    public static bool HasJsRuntime() => JsRuntimeArgument() != null || FindOnPath(Exe("deno")) != null;
 
     static string? FindOnPath(string exe)
     {
@@ -896,6 +916,9 @@ public static class YtDlp
             if (!UsesPython)
             {
                 if (localYtDlp == null) return null;
+                // A yt-dlp from Homebrew or pip refuses -U and is updated by its package manager, so there is nothing to offer.
+                if (!LocalDirs.Any(d => File.Exists(Path.Combine(d, Exe("yt-dlp")))))
+                    return new UpdateInfo(new Dictionary<string, string> { ["yt-dlp"] = localYtDlp }, []);
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 using var release = JsonDocument.Parse(await Components.Http.GetStringAsync(
                     "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", timeout.Token));
@@ -942,16 +965,34 @@ public static class YtDlp
 
 public static class Components
 {
-    public sealed record Item(string Name, string Url, int ApproxMb, Func<string, bool>? ZipEntryFilter);
+    public sealed record Item(string Name, string Url, int ApproxMb, Func<string, bool>? ZipEntryFilter)
+    {
+        // Saved under this name instead of the one in the URL.
+        public string? FileName { get; init; }
+        // More downloads that make up the same component.
+        public string[] MoreUrls { get; init; } = [];
+        // How many times to try a download before giving up.
+        public int Attempts { get; init; } = 1;
+    }
 
-    public static readonly Item YtDlpExe = new("yt-dlp",
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", 22, null);
-    public static readonly Item Ffmpeg = new("ffmpeg",
-        "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip", 86,
-        e => e.Contains("/bin/") && (e.EndsWith(".dll") || e.EndsWith("/ffmpeg.exe") || e.EndsWith("/ffprobe.exe")));
-    public static readonly Item Deno = new("Deno (for YouTube)",
-        "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip", 40,
-        e => e == "deno.exe");
+    static readonly bool Mac = OperatingSystem.IsMacOS();
+    static bool Arm => RuntimeInformation.OSArchitecture == Architecture.Arm64;
+    static string MacFfmpeg(string tool) => $"https://ffmpeg.martin-riedl.de/redirect/latest/macos/{(Arm ? "arm64" : "amd64")}/release/{tool}.zip";
+
+    public static readonly Item YtDlpExe = Mac
+        ? new("yt-dlp", "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos", 36, null) { FileName = "yt-dlp" }
+        : new("yt-dlp", "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe", 22, null);
+    // The macOS builds ship ffmpeg and ffprobe as separate archives, and their "latest" redirect answers 404 about one time in four.
+    public static readonly Item Ffmpeg = Mac
+        ? new("ffmpeg", MacFfmpeg("ffmpeg"), 57, e => e is "ffmpeg" or "ffprobe") { MoreUrls = [MacFfmpeg("ffprobe")], Attempts = 5 }
+        : new("ffmpeg", "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip", 86,
+              e => e.Contains("/bin/") && (e.EndsWith(".dll") || e.EndsWith("/ffmpeg.exe") || e.EndsWith("/ffprobe.exe")));
+    public static readonly Item Deno = Mac
+        ? new("Deno (for YouTube)",
+              $"https://github.com/denoland/deno/releases/latest/download/deno-{(Arm ? "aarch64" : "x86_64")}-apple-darwin.zip", 40,
+              e => e == "deno")
+        : new("Deno (for YouTube)", "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip", 40,
+              e => e == "deno.exe");
 
     public static readonly HttpClient Http = CreateHttp();
     static HttpClient CreateHttp()
@@ -968,54 +1009,85 @@ public static class Components
         Directory.CreateDirectory(dir);
         foreach (var item in items)
         {
-            log($"Downloading {item.Name} (~{item.ApproxMb} MB): {item.Url}");
-            var tmp = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".part");
-            try
+            string[] urls = [item.Url, .. item.MoreUrls];
+            for (int u = 0; u < urls.Length; u++)
             {
-                using (var resp = await Http.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead, ct))
+                var url = urls[u];
+                log($"Downloading {item.Name} (~{item.ApproxMb} MB): {url}");
+                var tmp = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".part");
+                try
                 {
-                    resp.EnsureSuccessStatusCode();
-                    var total = resp.Content.Headers.ContentLength ?? item.ApproxMb * 1024L * 1024L;
-                    await using var src = await resp.Content.ReadAsStreamAsync(ct);
-                    await using var dst = File.Create(tmp);
-                    var buf = new byte[1 << 16];
-                    long done = 0;
-                    var lastReport = Environment.TickCount64;
-                    int n;
-                    while ((n = await src.ReadAsync(buf, ct)) > 0)
+                    for (int attempt = 1; ; attempt++)
                     {
-                        await dst.WriteAsync(buf.AsMemory(0, n), ct);
-                        done += n;
-                        if (Environment.TickCount64 - lastReport > 150)
+                        try
                         {
-                            onProgress(item.Name, Math.Min(1.0, (double)done / total));
-                            lastReport = Environment.TickCount64;
+                            await DownloadAsync(url, tmp, item.ApproxMb * 1024L * 1024L / urls.Length,
+                                                f => onProgress(item.Name, (u + f) / urls.Length), ct);
+                            break;
+                        }
+                        catch (HttpRequestException e) when (attempt < item.Attempts)
+                        {
+                            log($"  {e.Message} Trying again...");
+                            await Task.Delay(TimeSpan.FromSeconds(attempt), ct);
                         }
                     }
-                }
-                onProgress(item.Name, 1.0);
+                    onProgress(item.Name, (u + 1.0) / urls.Length);
 
-                if (item.ZipEntryFilter == null)
-                {
-                    File.Move(tmp, Path.Combine(dir, Path.GetFileName(new Uri(item.Url).LocalPath)), overwrite: true);
-                    continue;
-                }
-                int extracted = 0;
-                using (var zip = ZipFile.OpenRead(tmp))
-                    foreach (var entry in zip.Entries.Where(e => e.Name.Length > 0 && item.ZipEntryFilter(e.FullName)))
+                    if (item.ZipEntryFilter == null)
                     {
-                        entry.ExtractToFile(Path.Combine(dir, entry.Name), overwrite: true);
-                        extracted++;
+                        var target = Path.Combine(dir, item.FileName ?? Path.GetFileName(new Uri(url).LocalPath));
+                        File.Move(tmp, target, overwrite: true);
+                        MakeExecutable(target);
+                        continue;
                     }
-                if (extracted == 0) throw new InvalidDataException($"The {item.Name} archive doesn't contain the expected files.");
-                log($"  extracted {extracted} files");
-            }
-            finally
-            {
-                try { File.Delete(tmp); } catch { }
+                    int extracted = 0;
+                    using (var zip = ZipFile.OpenRead(tmp))
+                        foreach (var entry in zip.Entries.Where(e => e.Name.Length > 0 && item.ZipEntryFilter(e.FullName)))
+                        {
+                            var target = Path.Combine(dir, entry.Name);
+                            entry.ExtractToFile(target, overwrite: true);
+                            MakeExecutable(target);
+                            extracted++;
+                        }
+                    if (extracted == 0) throw new InvalidDataException($"The {item.Name} archive doesn't contain the expected files.");
+                    log($"  extracted {extracted} files");
+                }
+                finally
+                {
+                    try { File.Delete(tmp); } catch { }
+                }
             }
         }
         log("Components installed to " + dir);
+    }
+
+    static async Task DownloadAsync(string url, string path, long approxSize, Action<double> onFraction, CancellationToken ct)
+    {
+        using var resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        resp.EnsureSuccessStatusCode();
+        var total = resp.Content.Headers.ContentLength ?? approxSize;
+        await using var src = await resp.Content.ReadAsStreamAsync(ct);
+        await using var dst = File.Create(path);
+        var buf = new byte[1 << 16];
+        long done = 0;
+        var lastReport = Environment.TickCount64;
+        int n;
+        while ((n = await src.ReadAsync(buf, ct)) > 0)
+        {
+            await dst.WriteAsync(buf.AsMemory(0, n), ct);
+            done += n;
+            if (Environment.TickCount64 - lastReport > 150)
+            {
+                onFraction(Math.Min(1.0, (double)done / total));
+                lastReport = Environment.TickCount64;
+            }
+        }
+    }
+
+    static void MakeExecutable(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
     }
 }
 
@@ -1025,6 +1097,11 @@ public static class AppUpdate
 {
     public const string LatestRelease = "https://api.github.com/repos/lovesuper/nya-downloader/releases/latest";
     public static string Api => Environment.GetEnvironmentVariable("NYADOWNLOADER_UPDATES_URL") is { Length: > 0 } u ? u : LatestRelease;
+
+    // The release file this build updates from: the exe on Windows, a zipped .app for the Mac's processor on macOS.
+    public static string AssetName => OperatingSystem.IsMacOS()
+        ? $"{AppInfo.Name}-mac-{(RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "arm64" : "x64")}.zip"
+        : AppInfo.Name + ".exe";
 
     public static AppRelease? Parse(string json)
     {
@@ -1038,7 +1115,7 @@ public static class AppUpdate
             if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
                 foreach (var a in assets.EnumerateArray())
                 {
-                    if (!string.Equals(a.GetProperty("name").GetString(), AppInfo.Name + ".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(a.GetProperty("name").GetString(), AssetName, StringComparison.OrdinalIgnoreCase)) continue;
                     url = a.GetProperty("browser_download_url").GetString();
                     sha = a.TryGetProperty("digest", out var d) && d.GetString() is { } digest && digest.StartsWith("sha256:") ? digest[7..].ToLowerInvariant() : null;
                     size = a.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt64() : 0;
@@ -1068,7 +1145,7 @@ public static class AppUpdate
 
     public static async Task DownloadAsync(AppRelease r, string exe, Action<double> onProgress, CancellationToken ct)
     {
-        if (r.ExeUrl == null) throw new InvalidDataException("The release has no " + AppInfo.Name + ".exe.");
+        if (r.ExeUrl == null) throw new InvalidDataException("The release has no " + AssetName + ".");
         var target = NewPath(exe);
         try
         {
@@ -1094,8 +1171,9 @@ public static class AppUpdate
                     throw new InvalidDataException("The downloaded file is damaged (its SHA-256 doesn't match the release).");
                 if (done < 1024 * 1024) throw new InvalidDataException("The downloaded file is too small to be the app.");
             }
+            var magic = OperatingSystem.IsMacOS() ? "PK"u8.ToArray() : "MZ"u8.ToArray();
             using (var check = File.OpenRead(target))
-                if (check.ReadByte() != 'M' || check.ReadByte() != 'Z') throw new InvalidDataException("The downloaded file is not a program.");
+                if (check.ReadByte() != magic[0] || check.ReadByte() != magic[1]) throw new InvalidDataException("The downloaded file is not a program.");
         }
         catch
         {
@@ -1185,6 +1263,9 @@ public sealed class LogFile(string name)
 
     static string ChoosePath(string name)
     {
+        // Nothing may be written inside a macOS app bundle (it would break its signature), so logs go where macOS keeps them.
+        if (OperatingSystem.IsMacOS())
+            return Path.Combine(AppInfo.DataDirOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Logs", AppInfo.Name), name);
         var dir = AppContext.BaseDirectory;
         try
         {
@@ -1305,8 +1386,10 @@ public sealed class Settings
     public BackgroundLook Look { get; set; } = new();
     public Dictionary<string, string> Cookies { get; set; } = new();
 
+    // %APPDATA% on Windows; ~/Library/Application Support on macOS (ApplicationData would be ~/.config there).
     static string PathFor(string appName) => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), appName, "settings.json");
+        Environment.GetFolderPath(OperatingSystem.IsWindows() ? Environment.SpecialFolder.ApplicationData : Environment.SpecialFolder.LocalApplicationData),
+        appName, "settings.json");
     static string FilePath => AppInfo.DataDirOverride is { } dir ? Path.Combine(dir, "settings.json") : PathFor(AppInfo.Name);
 
     public static Settings Load()

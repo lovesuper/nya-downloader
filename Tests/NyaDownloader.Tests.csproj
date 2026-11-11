@@ -17,6 +17,7 @@
     <Compile Include="..\Controls.cs" Link="App\Controls.cs" />
     <Compile Include="..\LogView.cs" Link="App\LogView.cs" />
     <Compile Include="..\BackgroundPack.cs" Link="App\BackgroundPack.cs" />
+    <Compile Include="..\Glass.cs" Link="App\Glass.cs" />
     <Using Include="System.IO" />
     <Using Include="System.Net.Http" />
   </ItemGroup>

@@ -26,7 +26,7 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
-    <DefaultItemExcludes>$(DefaultItemExcludes);Tests\**;publish\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Tests\**;Mac\**;publish\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

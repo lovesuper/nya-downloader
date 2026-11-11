@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The macOS build: the same Core.cs as the Windows app, with an Avalonia UI. Build the .app with build-mac.sh. -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>VideoDownloader</RootNamespace>
+    <AssemblyName>NyaDownloader</AssemblyName>
+    <Product>NyaDownloader</Product>
+    <AssemblyTitle>NyaDownloader</AssemblyTitle>
+    <Company>NyaDownloader</Company>
+    <!-- One version for both builds: it is taken from the Windows project. -->
+    <Version>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../VideoDownloader.csproj')), '(?s).*&lt;Version&gt;\s*([^&lt;\s]+)\s*&lt;/Version&gt;.*', '$1'))</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Core.cs" Link="Shared/Core.cs" />
+    <Compile Include="../Glass.cs" Link="Shared/Glass.cs" />
+    <EmbeddedResource Include="../backgrounds/*.nyabg" LogicalName="bg/%(Filename)" />
+    <EmbeddedResource Include="../app.ico" LogicalName="app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
+  </ItemGroup>
+
+</Project>
