@@ -50,20 +50,30 @@ public sealed class MainForm : Form
     readonly TextBox _outDir = new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.None };
     readonly Button _outPick = Btn("Browse...");
     readonly RadioButton _video = new() { Text = "Video (mp4)", AutoSize = true, Checked = true };
-    readonly RadioButton _audio = new() { Text = "Audio only (mp3)", AutoSize = true };
+    readonly RadioButton _m4a = new() { Text = "Audio (m4a)", AutoSize = true }, _mp3 = new() { Text = "Audio (mp3)", AutoSize = true };
     readonly CheckBox _cover = new() { Text = "Save cover (jpg)", AutoSize = true, Margin = new Padding(24, 3, 3, 3) };
     readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, Anchor = AnchorStyles.Left, Width = 190, MinimumSize = new Size(190, 0) };
+    readonly ComboBox _subtitles = new() { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, Anchor = AnchorStyles.Left, Width = 150, MinimumSize = new Size(150, 0) };
+    readonly CueTextBox _from = new() { BorderStyle = BorderStyle.None, Cue = "start" }, _to = new() { BorderStyle = BorderStyle.None, Cue = "end" };
+    readonly Button _chapters = Btn("Chapters...");
     readonly Label _qualityHint = new() { AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 2, 3, 6) };
     readonly Button _download = Btn("Download", 20), _cancel = Btn("Cancel"), _showFile = Btn("Show in folder"), _setup = Btn("Install components");
     readonly ProgressBar _progress = new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000, Height = 18 };
     readonly Label _status = new() { AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(3, 6, 3, 6) };
     readonly TextBox _log = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 9f), BackColor = SystemColors.Window, BorderStyle = BorderStyle.None };
-    readonly FieldBorder _urlBox, _outDirBox, _logBox;
+    readonly FieldBorder _urlBox, _outDirBox, _logBox, _fromBox, _toBox;
     readonly Label _engine = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = DimColor, Margin = new Padding(3, 3, 0, 3) };
     readonly LinkLabel _update = Link("Update yt-dlp"), _errorLogLink = Link("Open error.log");
-    readonly Panel _updateBanner = new() { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Visible = false, BackColor = Color.FromArgb(0xFF, 0xF4, 0xCE), Padding = new Padding(10, 6, 10, 6), Margin = new Padding(3, 6, 3, 0) };
-    readonly Label _updateText = new() { AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, ForeColor = Color.FromArgb(0x5C, 0x40, 0x00) };
-    readonly Button _updateNow = new() { Text = "Update", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 2, 12, 2), Anchor = AnchorStyles.Right, BackColor = SystemColors.Control, UseVisualStyleBackColor = true };
+    readonly Panel _updateBanner = Banner(), _appBanner = Banner();
+    readonly Label _updateText = BannerText(), _appUpdateText = BannerText();
+    readonly Button _updateNow = BannerButton("Update"), _appUpdateNow = BannerButton("Update");
+    readonly LinkLabel _appNotes = new() { Text = "What's new", AutoSize = true, Anchor = AnchorStyles.Right, Margin = new Padding(3, 3, 12, 3) };
+    readonly TaskbarProgress _taskbar = new();
+    AppRelease? _appRelease;
+
+    static Panel Banner() => new() { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Visible = false, BackColor = Color.FromArgb(0xFF, 0xF4, 0xCE), Padding = new Padding(10, 6, 10, 6), Margin = new Padding(3, 6, 3, 0) };
+    static Label BannerText() => new() { AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, ForeColor = Color.FromArgb(0x5C, 0x40, 0x00) };
+    static Button BannerButton(string text) => new() { Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 2, 12, 2), Anchor = AnchorStyles.Right, BackColor = SystemColors.Control, UseVisualStyleBackColor = true };
 
     bool _selectAllOnMouseUp;
     YtDlp.UpdateInfo? _updateInfo;
@@ -72,6 +82,7 @@ public sealed class MainForm : Form
     CancellationTokenSource? _cts;
     string? _lastFile;
     Platform _current = Platform.Unknown;
+    string? _lastLink;
     bool _hideNoVideoWarnings;
 
     public MainForm()
@@ -79,18 +90,11 @@ public sealed class MainForm : Form
         _urlBox = new FieldBorder(_url, new Padding(6, 4, 6, 4));
         _outDirBox = new FieldBorder(_outDir, new Padding(6, 4, 6, 4));
         _logBox = new FieldBorder(_log, new Padding(6, 4, 2, 4));
-        (_gifData, _gifName) = LoadRandomGif();
-        if (_gifData != null)
-        {
-            try
-            {
-                using var ms = new MemoryStream(_gifData);
-                using var gif = Image.FromStream(ms);
-                _veilAlpha = VeilFor(gif);
-                _firstFrame = SmallVeiledFrame(gif, _veilAlpha);
-            }
-            catch { _gifData = null; }
-        }
+        _fromBox = new FieldBorder(_from, new Padding(6, 4, 6, 4)) { Width = 84 };
+        _toBox = new FieldBorder(_to, new Padding(6, 4, 6, 4)) { Width = 84 };
+        _settings.Look = _settings.Look.Checked(_gifNames.Length);
+        LoadGif(_settings.Look.Gif);
+        _canvas.IceReady += () => PostToUi(RefreshBackground);
 
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F);
@@ -100,29 +104,34 @@ public sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         Padding = new Padding(ResizeBorder);
-        ClientSize = new Size(780, 612);
-        MinimumSize = new Size(620, 490);
+        ClientSize = new Size(780, 660);
+        MinimumSize = new Size(620, 540);
         StartPosition = FormStartPosition.CenterScreen;
         if (LaunchMinimized) WindowState = FormWindowState.Minimized;
         AcceptButton = _download;
         using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("app.ico"))
             if (iconStream != null) Icon = new Icon(iconStream);
 
-        var fields = Grid(new() { Dock = DockStyle.Top, ColumnCount = 3, RowCount = 7, Padding = new Padding(12, 12, 12, 0) }, stretchColumn: 1);
+        var fields = Grid(new() { Dock = DockStyle.Top, ColumnCount = 3, RowCount = 8, Padding = new Padding(12, 12, 12, 0) }, stretchColumn: 1);
         void Add(Control c, int col, int row, int span = 1) { fields.Controls.Add(c, col, row); fields.SetColumnSpan(c, span); }
         Add(Caption("Link:"), 0, 0); Add(_urlBox, 1, 0); Add(_platform, 2, 0);
         Add(Caption("Cookies:"), 0, 1); Add(_cookiesStatus, 1, 1); Add(Row(_cookiesPick, _cookiesClear), 2, 1);
         Add(_cookiesHelp, 1, 2);
         Add(Caption("Folder:"), 0, 3); Add(_outDirBox, 1, 3); Add(_outPick, 2, 3);
-        Add(Caption("Mode:"), 0, 4); Add(Row(_video, _audio, _cover), 1, 4, 2);
-        Add(Caption("Quality:"), 0, 5); Add(_quality, 1, 5, 2);
-        Add(_qualityHint, 1, 6);
+        Add(Caption("Mode:"), 0, 4); Add(Row(_video, _m4a, _mp3, _cover), 1, 4, 2);
+        Add(Caption("Quality:"), 0, 5); Add(Row(_quality, Caption("Subtitles:", 18), _subtitles), 1, 5, 2);
+        Add(Caption("Fragment:"), 0, 6); Add(Row(_fromBox, Caption("to"), _toBox, _chapters), 1, 6, 2);
+        Add(_qualityHint, 1, 7);
 
         var bannerGrid = Grid(new() { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 }, stretchColumn: 0);
         bannerGrid.Controls.AddRange([_updateText, _updateNow]);
         _updateBanner.Controls.Add(bannerGrid);
-        var lower = Grid(new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(12, 4, 12, 12) }, stretchColumn: 0, stretchRow: 3);
-        lower.Controls.AddRange([Row(_download, _cancel, _showFile, _setup), _progress, _status, _logBox, Row(_engine, _update, _errorLogLink), _updateBanner]);
+        var appGrid = Grid(new() { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 }, stretchColumn: 0);
+        appGrid.Controls.AddRange([_appUpdateText, _appNotes, _appUpdateNow]);
+        _appBanner.Controls.Add(appGrid);
+        var lower = Grid(new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(12, 12, 12, 12) }, stretchColumn: 0, stretchRow: 3);
+        (_fieldsGrid, _lowerGrid) = (fields, lower);
+        lower.Controls.AddRange([Row(_download, _cancel, _showFile, _setup), _progress, _status, _logBox, Row(_engine, _update, _errorLogLink), _appBanner, _updateBanner]);
 
         var titleBar = Grid(new() { Dock = DockStyle.Top, ColumnCount = 4, RowCount = 1, Padding = new Padding(10, 0, 0, 0) }, stretchColumn: 1);
         var minimize = new CaptionButton(close: false);
@@ -141,15 +150,27 @@ public sealed class MainForm : Form
 
         BackColor = PageColor;
         DoubleBuffered = true;
-        if (HasBackground) foreach (var grid in new[] { fields, lower, titleBar }) MakeTransparent(grid);
+        if (HasBackground)
+        {
+            foreach (var grid in new[] { fields, lower, titleBar }) MakeTransparent(grid);
+            foreach (var c in OpaqueControls().Concat([fields, lower]))
+            {
+                c.Move += (_, _) => BackgroundMoved();
+                c.Resize += (_, _) => BackgroundMoved();
+                c.VisibleChanged += (_, _) => BackgroundMoved();
+            }
+        }
 
         _outDir.Text = string.IsNullOrWhiteSpace(_settings.OutputDir) ? AppContext.BaseDirectory.TrimEnd('\\') : _settings.OutputDir;
         _quality.Items.AddRange(Quality.All);
         _quality.SelectedItem = Quality.All.FirstOrDefault(q => q.MaxHeight == _settings.MaxHeight) ?? Quality.All[0];
         _quality.Enabled = !_settings.AudioOnly;
-        _audio.Checked = _settings.AudioOnly;
+        _m4a.Checked = _settings.AudioOnly && _settings.AudioFormat == "m4a";
+        _mp3.Checked = _settings.AudioOnly && !_m4a.Checked;
         _video.Checked = !_settings.AudioOnly;
         _cover.Checked = _settings.SaveCover;
+        _subtitles.Items.AddRange(SubtitleLanguage.All);
+        _subtitles.SelectedItem = SubtitleLanguage.From(_settings.Subtitles);
         _setup.Visible = _cancel.Enabled = _showFile.Enabled = false;
         _errorLogLink.Visible = ErrorLog.Exists;
         UpdateCookiesView();
@@ -167,7 +188,7 @@ public sealed class MainForm : Form
             if (_selectAllOnMouseUp && _url.SelectionLength == 0) _url.SelectAll();
             _selectAllOnMouseUp = false;
         };
-        foreach (var rb in new[] { _video, _audio })
+        foreach (var rb in new[] { _video, _m4a, _mp3 })
             rb.CheckedChanged += (_, _) =>
             {
                 if (!rb.Checked) return;
@@ -177,6 +198,10 @@ public sealed class MainForm : Form
             };
         _quality.SelectedIndexChanged += (_, _) => { UpdateQualityHint(); UsageLog.Write($"Quality: {SelectedQuality.Label}"); };
         _cover.CheckedChanged += (_, _) => UsageLog.Write($"Save cover: {(_cover.Checked ? "on" : "off")}");
+        _subtitles.SelectedIndexChanged += (_, _) => UsageLog.Write($"Subtitles: {SelectedSubtitles.Name}");
+        _from.TextChanged += (_, _) => UpdateQualityHint();
+        _to.TextChanged += (_, _) => UpdateQualityHint();
+        _chapters.Click += async (_, _) => await PickChaptersAsync();
         _cookiesHelp.LinkClicked += (_, _) => ShowCookieHelp();
         _cookiesPick.Click += (_, _) => PickCookies();
         _cookiesClear.Click += (_, _) => ClearCookies();
@@ -187,6 +212,8 @@ public sealed class MainForm : Form
         _setup.Click += async (_, _) => await InstallComponentsAsync();
         _update.LinkClicked += async (_, _) => await UpdateYtDlpAsync();
         _updateNow.Click += async (_, _) => await UpdateYtDlpAsync();
+        _appUpdateNow.Click += async (_, _) => await UpdateAppAsync();
+        _appNotes.LinkClicked += (_, _) => { UsageLog.Write("Opened release notes"); if (_appRelease != null) OpenUrl(_appRelease.PageUrl); };
         _errorLogLink.LinkClicked += (_, _) => OpenErrorLog();
         foreach (var f in typeof(MainForm).GetFields(BindingFlags.Instance | BindingFlags.NonPublic))
             if (f.GetValue(this) is Control c) c.Name = f.Name.TrimStart('_');
@@ -206,7 +233,7 @@ public sealed class MainForm : Form
         return t;
     }
 
-    static Label Caption(string text) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left };
+    static Label Caption(string text, int left = 3) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(left, 3, 3, 3) };
 
     static FlowLayoutPanel Row(params Control[] controls)
     {
@@ -218,16 +245,87 @@ public sealed class MainForm : Form
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        if (_gifData != null) { StartGif(_gifData, _veilAlpha); _gifData = null; }
-        UsageLog.Write($"App started | background: {_gifName ?? "none"} | mode: {Mode} | quality: {SelectedQuality.Label} | folder: {_outDir.Text} | " +
+        if (HasBackground) StartGif();
+        UsageLog.Write($"App started | background: {_gifName ?? "none"} ({_settings.Look}) | mode: {Mode} | quality: {SelectedQuality.Label} | " +
+                       $"subtitles: {SelectedSubtitles.Name} | folder: {_outDir.Text} | " +
                        "saved cookies: " + (_settings.Cookies.Count > 0
                            ? string.Join(", ", _settings.Cookies.Select(kv => $"{kv.Key}={Path.GetFileName(kv.Value)}"))
                            : "none"));
+        if (Environment.ProcessPath is { } exe) AppUpdate.CleanUp(exe);
+        var appCheck = CheckAppUpdateAsync();
         await CheckEngineAsync();
         if (IsDisposed) return;
         UsageLog.Write($"yt-dlp: {_localYtDlp ?? "not found"} ({YtDlp.Locate().Description})" +
                        (MissingComponents() is { Count: > 0 } m ? " | missing: " + string.Join(", ", m.Select(x => x.Name)) : ""));
         await CheckForUpdatesAsync();
+        await appCheck;
+    }
+
+    async Task CheckAppUpdateAsync()
+    {
+        var release = await AppUpdate.CheckAsync();
+        if (IsDisposed) return;
+        if (release == null)
+        {
+            UsageLog.Write("App update check: couldn't check (offline?)");
+            return;
+        }
+        bool newer = AppUpdate.IsNewer(release, AppInfo.Version);
+        UsageLog.Write(newer ? $"App update check: {AppInfo.Name} {release.Version} is out (you have {AppInfo.Version})"
+                             : $"App update check: {AppInfo.Version} is the latest");
+        if (!newer) return;
+        _appRelease = release;
+        _appUpdateText.Text = $"{AppInfo.Name} {release.Version} is out (you have {AppInfo.Version}).";
+        _appUpdateNow.Visible = release.ExeUrl != null;
+        _appBanner.Visible = true;
+    }
+
+    async Task UpdateAppAsync()
+    {
+        if (_appRelease is not { } release || _cts != null) return;
+        var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        UsageLog.Write($"Update app: {AppInfo.Version} -> {release.Version}");
+        bool ready = false;
+        await RunBusyAsync("Update app", async ct =>
+        {
+            Log($"Downloading {AppInfo.Name} {release.Version}: {release.ExeUrl}");
+            ShowStatus($"Downloading {AppInfo.Name} {release.Version}...", NeutralColor);
+            try
+            {
+                await AppUpdate.DownloadAsync(release, exe, f => PostToUi(() =>
+                {
+                    ShowProgress((int)(f * 1000));
+                    ShowStatus($"Downloading {AppInfo.Name} {release.Version}: {(int)(f * 100)}%", NeutralColor);
+                }), ct);
+                AppUpdate.Swap(exe);
+                ready = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log(ex.Message);
+                LogError("APP UPDATE ERROR", $"{AppInfo.Version} -> {release.Version}: {ex.Message}", ex.ToString());
+                if (ex is UnauthorizedAccessException)
+                {
+                    ShowStatus("Can't replace the app in this folder, so the download page is opening instead.", ErrorColor);
+                    OpenUrl(release.PageUrl);
+                }
+                else ShowStatus("Couldn't update the app: " + ex.Message, ErrorColor);
+            }
+        });
+        if (!ready || IsDisposed) return;
+        UsageLog.Write($"Update app: installed {release.Version}, restarting");
+        SaveSettings();
+        try
+        {
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WindowStyle = LaunchMinimized ? ProcessWindowStyle.Minimized : ProcessWindowStyle.Normal });
+        }
+        catch (Exception ex)
+        {
+            LogError("APP UPDATE ERROR", "Couldn't restart: " + ex.Message, ex.ToString());
+            ShowStatus($"Updated to {release.Version}. Close the app and start it again.", OkColor);
+            return;
+        }
+        Close();
     }
 
     async Task CheckForUpdatesAsync()
@@ -258,7 +356,6 @@ public sealed class MainForm : Form
 
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     [DllImport("kernel32.dll")] static extern void GetStartupInfoW(out StartupInfo si);
 
@@ -342,70 +439,183 @@ public sealed class MainForm : Form
         _heartbeat.Stop();
         _cts?.Cancel();
         SaveSettings();
+        _tray?.Dispose();
         base.OnFormClosing(e);
     }
 
     void SaveSettings()
     {
         _settings.OutputDir = _outDir.Text.Trim();
-        _settings.AudioOnly = _audio.Checked;
+        _settings.AudioOnly = !_video.Checked;
+        _settings.AudioFormat = _m4a.Checked ? "m4a" : "mp3";
         _settings.SaveCover = _cover.Checked;
         _settings.MaxHeight = SelectedQuality.MaxHeight;
+        _settings.Subtitles = SelectedSubtitles.Code;
         _settings.Save();
     }
 
     static readonly Color PageColor = Color.White;
-    readonly string? _gifName;
-    byte[]? _gifData;
-    int _veilAlpha;
+    string? _gifName;
+    byte[]? _gifBytes;
+    readonly string[] _gifNames = GifNames();
     readonly List<Control> _transparentControls = new();
     readonly System.Windows.Forms.Timer _gifTimer = new() { Interval = 125 };
     readonly Stopwatch _gifClock = new();
+    readonly BackdropCanvas _canvas = new();
     Bitmap? _firstFrame;
     List<Bitmap>? _frames;
     int[] _delaysMs = [];
-    int _frameIndex;
+    int _frameIndex, _decodeVersion;
     long _frameShownAt;
     Bitmap? _backgroundCache;
+    bool _backgroundStale, _gifHooked;
+    TableLayoutPanel? _fieldsGrid, _lowerGrid;
+    LookDialog? _lookDialog;
+
+    void BackgroundMoved()
+    {
+        if (_backgroundCache == null || _backgroundStale) return;
+        _backgroundStale = true;
+        Invalidate(true);
+    }
     bool HasBackground => _firstFrame != null;
 
-    const PixelFormat FastFormat = PixelFormat.Format32bppPArgb;
-
-    static (byte[]? Data, string? Name) LoadRandomGif()
+    static string[] GifNames()
     {
         try
         {
-            var asm = typeof(MainForm).Assembly;
-            var names = asm.GetManifestResourceNames().Where(n => n.StartsWith("bg/", StringComparison.Ordinal)).ToArray();
-            if (names.Length == 0) return (null, null);
-            var name = names[Random.Shared.Next(names.Length)];
-            using var s = asm.GetManifestResourceStream(name)!;
-            using var ms = new MemoryStream();
-            s.CopyTo(ms);
-            return (ms.ToArray(), name[3..]);
+            return typeof(MainForm).Assembly.GetManifestResourceNames().Where(n => n.StartsWith("bg/", StringComparison.Ordinal))
+                .OrderBy(n => n.Length).ThenBy(n => n, StringComparer.Ordinal).ToArray();
         }
-        catch { return (null, null); }
+        catch { return []; }
     }
 
-    static Bitmap SmallVeiledFrame(Image gif, int veilAlpha)
+    bool LoadGif(int choice)
     {
-        int sw = Math.Max(8, gif.Width / 2), sh = Math.Max(8, gif.Height / 2);
-        var bmp = new Bitmap(sw, sh, FastFormat);
-        using var g = Graphics.FromImage(bmp);
-        using var veil = new ImageAttributes();
-        float a = veilAlpha / 255f, k = 1 - a;
-        veil.SetColorMatrix(new ColorMatrix(
+        if (_gifNames.Length == 0) return false;
+        var name = _gifNames[choice >= 1 && choice <= _gifNames.Length ? choice - 1 : Random.Shared.Next(_gifNames.Length)];
+        try
+        {
+            using var s = typeof(MainForm).Assembly.GetManifestResourceStream(name)!;
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            var bytes = ms.ToArray();
+            using var gifStream = new MemoryStream(bytes);
+            using var gif = Image.FromStream(gifStream);
+            var first = Backdrop.Frame(gif, _settings.Look.Blur);
+            (_gifBytes, _gifName) = (bytes, name[3..]);
+            ReplaceFrames(first, null, []);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    void ReplaceFrames(Bitmap? first, List<Bitmap>? frames, int[] delays)
+    {
+        var old = new List<Bitmap>();
+        if (_firstFrame != null && _firstFrame != first) old.Add(_firstFrame);
+        if (_frames != null) old.AddRange(_frames.Where(f => frames == null || !frames.Contains(f)));
+        (_firstFrame, _frames, _delaysMs, _frameIndex) = (first, frames, delays, 0);
+        foreach (var b in old) b.Dispose();
+    }
+
+    void DecodeFrames()
+    {
+        if (_gifBytes is not { } bytes) return;
+        int version = ++_decodeVersion, blur = _settings.Look.Blur;
+        Task.Run(() => DecodeAllFrames(bytes, blur)).ContinueWith(t =>
+        {
+            if (t.IsFaulted) return;
+            var (frames, delays) = t.Result;
+            PostToUi(() =>
+            {
+                if (version != _decodeVersion || frames.Count < 2)
+                {
+                    foreach (var f in frames) f.Dispose();
+                    return;
+                }
+                ReplaceFrames(_firstFrame, frames, delays);
+                RefreshBackground();
+                ResumeGif();
+            });
+        });
+    }
+
+    void RefreshBackground()
+    {
+        if (!HasBackground) return;
+        RedrawBackground();
+        Invalidate(true);
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.P))
+        {
+            ShowLook();
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    internal LookDialog? LookWindow => _lookDialog is { IsDisposed: false } d ? d : null;
+
+    void ShowLook()
+    {
+        if (LookWindow is { } open)
+        {
+            if (open.Visible) open.Activate();
+            return;
+        }
+        UsageLog.Write("Opened background settings");
+        var dialog = new LookDialog(_settings.Look, _gifNames.Length);
+        dialog.Changed += ApplyLook;
+        dialog.FormClosed += (_, _) =>
+        {
+            _lookDialog = null;
+            SaveSettings();
+            UsageLog.Write("Background settings: " + _settings.Look);
+        };
+        _lookDialog = dialog;
+        if (!Visible) return;
+        var area = Screen.FromControl(this).WorkingArea;
+        int x = Right + 8 + dialog.Width <= area.Right ? Right + 8 : Math.Max(area.Left, Right - dialog.Width - 24);
+        dialog.Location = new Point(x, Math.Clamp(Top + 60, area.Top, Math.Max(area.Top, area.Bottom - dialog.Height)));
+        dialog.Show(this);
+    }
+
+    void ApplyLook(BackgroundLook next)
+    {
+        var prev = _settings.Look;
+        next = next.Checked(_gifNames.Length);
+        _settings.Look = next;
+        if (next.Gif != prev.Gif)
+        {
+            PauseGif();
+            if (LoadGif(next.Gif)) DecodeFrames();
+        }
+        else if (next.Blur != prev.Blur && _gifBytes != null)
+        {
+            PauseGif();
+            using var ms = new MemoryStream(_gifBytes);
+            using var gif = Image.FromStream(ms);
+            ReplaceFrames(Backdrop.Frame(gif, next.Blur), null, []);
+            DecodeFrames();
+        }
+        RefreshBackground();
+    }
+
+    List<GlassPanel> GlassPanels()
+    {
+        if (_fieldsGrid == null || _lowerGrid == null) return [];
+        float k = DeviceDpi / 96f;
+        int m = (int)Math.Round(6 * k), radius = (int)Math.Round(14 * k);
+        Rectangle top = _fieldsGrid.Bounds, bottom = _lowerGrid.Bounds;
+        return
         [
-            [k, 0, 0, 0, 0f],
-            [0, k, 0, 0, 0f],
-            [0, 0, k, 0, 0f],
-            [0, 0, 0, 1, 0f],
-            [a, a, a, 0, 1f],
-        ]));
-        g.Clear(PageColor);
-        g.InterpolationMode = InterpolationMode.Bilinear;
-        g.DrawImage(gif, new Rectangle(0, 0, sw, sh), 0, 0, gif.Width, gif.Height, GraphicsUnit.Pixel, veil);
-        return bmp;
+            new(Rectangle.FromLTRB(top.Left + m, top.Top + m, top.Right - m, top.Bottom), radius),
+            new(Rectangle.FromLTRB(bottom.Left + m, bottom.Top + m, bottom.Right - m, bottom.Bottom - m), radius),
+        ];
     }
 
     static int[] FrameDelays(Image gif, int count)
@@ -425,7 +635,7 @@ public sealed class MainForm : Form
         return delays;
     }
 
-    static (List<Bitmap> Frames, int[] Delays) DecodeAllFrames(byte[] data, int veilAlpha)
+    static (List<Bitmap> Frames, int[] Delays) DecodeAllFrames(byte[] data, int blur)
     {
         using var ms = new MemoryStream(data);
         using var gif = Image.FromStream(ms);
@@ -435,25 +645,9 @@ public sealed class MainForm : Form
         for (int i = 0; i < count; i++)
         {
             gif.SelectActiveFrame(dim, i);
-            frames.Add(SmallVeiledFrame(gif, veilAlpha));
+            frames.Add(Backdrop.Frame(gif, blur));
         }
         return (frames, FrameDelays(gif, count));
-    }
-
-    static int VeilFor(Image gif)
-    {
-        using var probe = new Bitmap(24, 24);
-        using (var g = Graphics.FromImage(probe)) g.DrawImage(gif, 0, 0, 24, 24);
-        double sum = 0;
-        for (int y = 0; y < 24; y++)
-            for (int x = 0; x < 24; x++)
-            {
-                var c = probe.GetPixel(x, y);
-                sum += (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255;
-            }
-        double lum = sum / (24 * 24), target = 0.88;
-        double alpha = lum >= target ? 0.5 : (target - lum) / (1 - lum);
-        return (int)(Math.Clamp(alpha, 0.5, 0.9) * 255);
     }
 
     void MakeTransparent(Control root)
@@ -477,27 +671,21 @@ public sealed class MainForm : Form
         b.UseVisualStyleBackColor = true;
     }
 
-    void StartGif(byte[] data, int veilAlpha)
+    void StartGif()
     {
-        _gifTimer.Tick += (_, _) => OnGifTick();
-        Activated += (_, _) => ResumeGif();
-        Deactivate += (_, _) => PauseGif();
-        Task.Run(() => DecodeAllFrames(data, veilAlpha)).ContinueWith(t =>
+        if (!_gifHooked)
         {
-            if (t.IsFaulted) return;
-            PostToUi(() =>
-            {
-                if (t.Result.Frames.Count < 2) return;
-                _frames = t.Result.Frames;
-                _delaysMs = t.Result.Delays;
-                if (GetForegroundWindow() == Handle) ResumeGif();
-            });
-        });
+            _gifHooked = true;
+            _gifTimer.Tick += (_, _) => OnGifTick();
+        }
+        DecodeFrames();
     }
+
+    static readonly bool StillBackground = Environment.GetEnvironmentVariable("NYADOWNLOADER_STILL") == "1";
 
     void ResumeGif()
     {
-        if (_frames == null || _gifTimer.Enabled) return;
+        if (StillBackground || _frames == null || _gifTimer.Enabled) return;
         _gifClock.Start();
         _frameShownAt = _gifClock.ElapsedMilliseconds;
         _gifTimer.Start();
@@ -527,42 +715,34 @@ public sealed class MainForm : Form
 
     void RedrawBackground()
     {
+        _backgroundStale = false;
         var size = ClientSize;
         if (size.Width <= 0 || size.Height <= 0) return;
         if (_backgroundCache == null || _backgroundCache.Size != size)
         {
             _backgroundCache?.Dispose();
-            _backgroundCache = new Bitmap(size.Width, size.Height, FastFormat);
+            _backgroundCache = new Bitmap(size.Width, size.Height, Backdrop.Format);
         }
-        using var g = Graphics.FromImage(_backgroundCache);
-        var frame = _frames != null ? _frames[_frameIndex] : _firstFrame;
-        if (frame == null) { g.Clear(PageColor); return; }
-        int sw = frame.Width, sh = frame.Height;
-
-        float scale = Math.Max((float)size.Width / sw, (float)size.Height / sh);
-        float w = sw * scale, h = sh * scale;
-        g.CompositingMode = CompositingMode.SourceCopy;
-        g.CompositingQuality = CompositingQuality.HighSpeed;
-        g.InterpolationMode = InterpolationMode.Bilinear;
-        g.PixelOffsetMode = PixelOffsetMode.HighSpeed;
-        using var visible = new Region(new Rectangle(Point.Empty, size));
-        foreach (var c in OpaqueControls())
-            if (c is { Visible: true, IsHandleCreated: true })
-                visible.Exclude(RectangleToClient(c.RectangleToScreen(c.ClientRectangle)));
-        g.Clip = visible;
-        g.DrawImage(frame, new Rectangle((int)((size.Width - w) / 2), 0, (int)Math.Ceiling(w), (int)Math.Ceiling(h)));
+        var frame = _frames != null ? _frames[Math.Min(_frameIndex, _frames.Count - 1)] : _firstFrame;
+        if (frame == null)
+        {
+            using var g = Graphics.FromImage(_backgroundCache);
+            g.Clear(PageColor);
+            return;
+        }
+        _canvas.Render(_backgroundCache, frame, _settings.Look, GlassPanels(), DeviceDpi / 96f);
     }
 
     Control[] OpaqueControls() =>
     [
-        _logBox, _urlBox, _outDirBox, _quality, _progress, _updateBanner, _platform,
-        _download, _cancel, _showFile, _setup, _cookiesPick, _cookiesClear, _outPick,
+        _logBox, _urlBox, _outDirBox, _quality, _progress, _updateBanner, _appBanner, _platform, _subtitles, _fromBox, _toBox,
+        _download, _cancel, _showFile, _setup, _cookiesPick, _cookiesClear, _outPick, _chapters,
     ];
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         if (!HasBackground || ClientSize.Width <= 0 || ClientSize.Height <= 0) { base.OnPaintBackground(e); return; }
-        if (_backgroundCache == null || _backgroundCache.Size != ClientSize) RedrawBackground();
+        if (_backgroundStale || _backgroundCache == null || _backgroundCache.Size != ClientSize) RedrawBackground();
         e.Graphics.CompositingMode = CompositingMode.SourceCopy;
         e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
         e.Graphics.PixelOffsetMode = PixelOffsetMode.None;
@@ -580,16 +760,25 @@ public sealed class MainForm : Form
 
     Quality SelectedQuality => _quality.SelectedItem as Quality ?? Quality.All[0];
 
-    DownloadMode Mode => _audio.Checked ? DownloadMode.Audio : DownloadMode.Video;
+    DownloadMode Mode => _m4a.Checked ? DownloadMode.Audio : _mp3.Checked ? DownloadMode.Mp3 : DownloadMode.Video;
+
+    SubtitleLanguage SelectedSubtitles => _subtitles.SelectedItem as SubtitleLanguage ?? SubtitleLanguage.None;
+
+    bool FragmentTyped => _from.Text.Trim().Length > 0 || _to.Text.Trim().Length > 0;
 
     void UpdateQualityHint()
     {
         var q = SelectedQuality;
-        _qualityHint.Text = Mode == DownloadMode.Video && _current == Platform.Instagram
+        _qualityHint.Text = FragmentTyped
+            ? "Fragment: type times like 1:30 or 1:02:03. The whole video is downloaded first, then the fragment is cut out exactly. " +
+              "An empty start means from the beginning, an empty end means to the end."
+            : Mode == DownloadMode.Video && _current == Platform.Instagram
             ? "Instagram: the app figures out whether the link is a reel, a photo or a carousel. " +
               "Photos are saved as jpg, videos as mp4, and a carousel is saved in full. Quality only affects videos."
             : Mode == DownloadMode.Audio
-            ? "Quality doesn't matter for mp3: the best available audio is saved at 320 kbps."
+            ? "m4a keeps the site's original sound as it is, without re-encoding (or opus if the site has no m4a). The quality setting is for video only."
+            : Mode == DownloadMode.Mp3
+            ? "mp3 plays everywhere, but it is re-encoded from the original (about 190 kbps), so m4a sounds a little better. The quality setting is for video only."
             : q.MaxHeight == 0
                 ? "Downloads the best quality the site has. Long 4K videos can take several GB."
                 : $"Downloads the best quality up to {q.MaxHeight}p, or the closest one if the video doesn't have it. " +
@@ -639,6 +828,11 @@ public sealed class MainForm : Form
     {
         var uri = PlatformDetector.ParseUrl(_url.Text);
         var platform = uri == null ? Platform.Unknown : PlatformDetector.FromHost(uri.Host);
+        if (uri != null)
+        {
+            if (_lastLink != null && _lastLink != uri.AbsoluteUri) _from.Text = _to.Text = "";
+            _lastLink = uri.AbsoluteUri;
+        }
         _platform.Visible = uri != null;
         _platform.Text = PlatformDetector.DisplayName(platform);
         _platform.BackColor = PlatformColor(platform) ?? Color.DimGray;
@@ -795,7 +989,7 @@ public sealed class MainForm : Form
         if (_cts != null) return;
         using var cts = _cts = new CancellationTokenSource();
         ClearLog();
-        _progress.Value = 0;
+        ShowProgress(0);
         SetBusy(true);
         try
         {
@@ -866,7 +1060,7 @@ public sealed class MainForm : Form
             await Components.InstallAsync(missing,
                 (name, fraction) => PostToUi(() =>
                 {
-                    _progress.Value = Math.Clamp((int)(fraction * _progress.Maximum), 0, _progress.Maximum);
+                    ShowProgress((int)(fraction * _progress.Maximum));
                     ShowStatus($"Downloading {name}: {(int)(fraction * 100)}%", NeutralColor);
                 }),
                 line => PostToUi(() => Log(line)),
@@ -907,56 +1101,245 @@ public sealed class MainForm : Form
 
     static string Count(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
 
+    internal static string PartialStatus(int saved, int total, int failed, string? hint) =>
+        $"Saved {saved} of {Count(total, "video", "videos")}, {failed} failed. " + (hint ?? "See the log below.");
+
     static string Describe(int photos, int videos) =>
         photos > 0 && videos > 0 ? $"{Count(photos, "photo", "photos")} and {Count(videos, "video", "videos")}"
         : photos > 0 ? Count(photos, "photo", "photos")
         : Count(videos, "video", "videos");
 
-    async Task DownloadAsync()
+    async Task<bool> EnsureEngineAsync()
     {
-        if (_cts != null) return;
-        if (!_hasYtDlp)
-        {
-            var missing = MissingComponents();
-            var answer = MessageBox.Show(this,
-                $"Downloading needs these components: {string.Join(", ", missing.Select(m => m.Name))} " +
-                $"(~{missing.Sum(m => m.ApproxMb)} MB, one time). Download them now?",
-                AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            UsageLog.Write($"Asked to install missing components before downloading: {answer}");
-            if (answer != DialogResult.Yes) return;
-            await InstallComponentsAsync();
-            if (!_hasYtDlp) return;
-        }
+        if (_hasYtDlp) return true;
+        var missing = MissingComponents();
+        var answer = MessageBox.Show(this,
+            $"Downloading needs these components: {string.Join(", ", missing.Select(m => m.Name))} " +
+            $"(~{missing.Sum(m => m.ApproxMb)} MB, one time). Download them now?",
+            AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        UsageLog.Write($"Asked to install missing components before downloading: {answer}");
+        if (answer != DialogResult.Yes) return false;
+        await InstallComponentsAsync();
+        return _hasYtDlp;
+    }
+
+    Uri? LinkOrComplain(string action)
+    {
         var uri = PlatformDetector.ParseUrl(_url.Text);
-        if (uri == null)
+        if (uri != null) return uri;
+        UsageLog.Write($"Clicked {action} without a valid link: \"{_url.Text.Trim()}\"");
+        ShowStatus("Paste a video link first.", ErrorColor);
+        FocusLink();
+        return null;
+    }
+
+    bool CreateFolder(string dir)
+    {
+        try
         {
-            UsageLog.Write($"Clicked Download without a valid link: \"{_url.Text.Trim()}\"");
-            ShowStatus("Paste a video link first.", ErrorColor);
-            FocusLink();
-            return;
+            Directory.CreateDirectory(dir);
+            return true;
         }
-        var outDir = _outDir.Text.Trim();
-        if (outDir.Length == 0) outDir = AppContext.BaseDirectory.TrimEnd('\\');
-        try { Directory.CreateDirectory(outDir); }
         catch (Exception ex)
         {
-            UsageLog.Write($"Can't create the folder \"{outDir}\": {ex.Message}");
+            UsageLog.Write($"Can't create the folder \"{dir}\": {ex.Message}");
             ShowStatus($"Can't create the folder: {ex.Message}", ErrorColor);
+            return false;
+        }
+    }
+
+    bool TryGetFragment(out Section? fragment)
+    {
+        fragment = null;
+        if (!TimeText.TryParse(_from.Text, out var from) || !TimeText.TryParse(_to.Text, out var to))
+        {
+            UsageLog.Write($"Bad fragment: \"{_from.Text.Trim()}\" - \"{_to.Text.Trim()}\"");
+            ShowStatus("Fragment: type times like 1:30 or 1:02:03, or leave both boxes empty for the whole video.", ErrorColor);
+            return false;
+        }
+        double start = from ?? 0, end = to ?? double.PositiveInfinity;
+        if (end <= start)
+        {
+            UsageLog.Write($"Bad fragment: \"{_from.Text.Trim()}\" - \"{_to.Text.Trim()}\"");
+            ShowStatus("Fragment: the end must be later than the start.", ErrorColor);
+            return false;
+        }
+        if (start > 0 || to != null) fragment = new Section(start, end);
+        return true;
+    }
+
+    async Task<Listing?> ListAsync(Uri uri, Platform platform, string? cookies, LinkKind kind)
+    {
+        Listing? listing = null;
+        var site = PlatformDetector.DisplayName(platform);
+        UsageLog.Write($"Getting the list: {uri.AbsoluteUri}");
+        await RunBusyAsync("Get the list", async ct =>
+        {
+            Log($"{site} | getting the list of videos | {uri.AbsoluteUri}");
+            StartHeartbeat("Getting the list of videos");
+            listing = await Listing.RunAsync(platform, uri, cookies,
+                n => PostToUi(() => _phase = $"Getting the list of videos: {Count(n, "video", "videos")} so far"), ct);
+        });
+        if (listing == null || IsDisposed) return null;
+        if (listing.IsList && listing.Entries.Count > 0)
+        {
+            UsageLog.Write($"List \"{listing.Title}\": {Count(listing.Entries.Count, "video", "videos")}" +
+                           (listing.Skipped > 0 ? $", {listing.Skipped} hidden" : ""));
+            return listing;
+        }
+        if (!listing.IsList && listing.ExitCode == 0) return listing;
+        if (kind == LinkKind.VideoInList)
+        {
+            UsageLog.Write("Couldn't open the playlist, downloading just the video");
+            return listing with { IsList = false };
+        }
+        var (hint, _) = Hints.Diagnose(listing.Output, platform);
+        var why = listing.IsList ? "The list is empty, or all its videos are private or not out yet."
+                : platform == Platform.TikTok ? "yt-dlp can't read TikTok profiles right now. Paste a link to a single video."
+                : platform == Platform.Instagram ? "yt-dlp can't read Instagram profiles. Paste a link to a post or a reel."
+                : hint ?? "See the log below.";
+        ShowStatus("Couldn't get the list of videos. " + why, ErrorColor);
+        Log(ErrorLog.Tail(listing.Output));
+        LogError("LIST ERROR", $"{site} | {uri.AbsoluteUri} | exit code {listing.ExitCode}", ErrorLog.Tail(listing.Output));
+        return null;
+    }
+
+    List<PlaylistEntry>? PickFromList(Listing listing, Uri uri, LinkKind kind)
+    {
+        var current = PlatformDetector.VideoId(uri);
+        bool playlist = PlatformDetector.ListId(uri) != null;
+        bool Checked(PlaylistEntry e) => kind == LinkKind.VideoInList ? e.Id == current : playlist;
+        var items = listing.Entries.Select((e, i) => new PickDialog.Item(
+            [(i + 1).ToString(), e.Title, e.Duration is { } d ? TimeText.Format(d) : "", e.Section ?? ""], e.Duration, Checked(e))).ToList();
+        PickDialog.Column[] columns = listing.Entries.Any(e => e.Section != null)
+            ? [new("#", 48), new("Title"), new("Length", 70), new("Section", 90)]
+            : [new("#", 48), new("Title"), new("Length", 70)];
+        var heading = $"{listing.Title}: {Count(listing.Entries.Count, "video", "videos")}" +
+                      (listing.Skipped > 0 ? $" ({listing.Skipped} more are private, deleted, live or not out yet)" : "") +
+                      ". Pick the ones to download. Several videos go into a folder named after the list.";
+        using var dialog = new PickDialog("Choose videos", heading, columns, items, "video", "videos");
+        UsageLog.Write("Shown dialog: Choose videos");
+        if (dialog.ShowDialog(this) != DialogResult.OK || IsDisposed)
+        {
+            UsageLog.Write("Choose videos: canceled");
+            if (!IsDisposed) ShowStatus("Canceled.", NeutralColor);
+            return null;
+        }
+        var picked = dialog.Picked.Select(i => listing.Entries[i]).ToList();
+        UsageLog.Write($"Choose videos: picked {picked.Count} of {listing.Entries.Count}: {string.Join(", ", picked.Take(20).Select(e => e.Id))}" +
+                       (picked.Count > 20 ? ", ..." : ""));
+        return picked;
+    }
+
+    async Task PickChaptersAsync()
+    {
+        if (_cts != null || !await EnsureEngineAsync()) return;
+        var uri = LinkOrComplain("Chapters");
+        if (uri == null) return;
+        var platform = PlatformDetector.FromHost(uri.Host);
+        var cookies = CookiesFor(platform) is { } c && File.Exists(c) ? c : null;
+        UsageLog.Write($"Getting chapters: {uri.AbsoluteUri}");
+        VideoInfo? info = null;
+        await RunBusyAsync("Get chapters", async ct =>
+        {
+            Log($"{PlatformDetector.DisplayName(platform)} | getting the chapters | {uri.AbsoluteUri}");
+            StartHeartbeat("Getting the chapters");
+            info = await VideoInfo.RunAsync(platform, uri, cookies, ct);
+        });
+        if (info == null || IsDisposed) return;
+        if (info.Chapters.Count == 0)
+        {
+            if (info.ExitCode != 0)
+            {
+                var (hint, _) = Hints.Diagnose(info.Output, platform);
+                ShowStatus("Couldn't get the chapters. " + (hint ?? "See the log below."), ErrorColor);
+                Log(ErrorLog.Tail(info.Output));
+                LogError("CHAPTERS ERROR", $"{uri.AbsoluteUri} | exit code {info.ExitCode}", ErrorLog.Tail(info.Output));
+            }
+            else
+            {
+                ShowStatus("This video has no chapters. Type the start and the end of the fragment instead.", WarnColor);
+                UsageLog.Write("Chapters: the video has none");
+            }
             return;
         }
+        var items = info.Chapters.Select(ch => new PickDialog.Item(
+            [ch.Number.ToString(), ch.Title!, $"{TimeText.Format(ch.Start)} - {(ch.ToEnd ? "end" : TimeText.Format(ch.End))}",
+             ch.ToEnd ? "" : TimeText.Format(ch.End - ch.Start)], ch.ToEnd ? null : ch.End - ch.Start, false)).ToList();
+        using var dialog = new PickDialog("Choose chapters",
+            $"{info.Title}: {Count(info.Chapters.Count, "chapter", "chapters")}. Pick the ones to download. Each one is saved as a separate file.",
+            [new("#", 40), new("Chapter"), new("Time", 140), new("Length", 70)], items, "chapter", "chapters");
+        UsageLog.Write("Shown dialog: Choose chapters");
+        if (dialog.ShowDialog(this) != DialogResult.OK || IsDisposed)
+        {
+            UsageLog.Write("Choose chapters: canceled");
+            if (!IsDisposed) ShowStatus("Canceled.", NeutralColor);
+            return;
+        }
+        var picked = dialog.Picked.Select(i => info.Chapters[i]).ToList();
+        UsageLog.Write($"Choose chapters: picked {string.Join(", ", picked.Select(p => p.Number))}");
+        await DownloadAsync(picked);
+    }
+
+    async Task DownloadAsync(IReadOnlyList<Section>? chapters = null)
+    {
+        if (_cts != null || !await EnsureEngineAsync()) return;
+        var uri = LinkOrComplain("Download");
+        if (uri == null) return;
+        Section? fragment = null;
+        if (chapters == null && !TryGetFragment(out fragment)) return;
+        var outDir = _outDir.Text.Trim();
+        if (outDir.Length == 0) outDir = AppContext.BaseDirectory.TrimEnd('\\');
+        if (!CreateFolder(outDir)) return;
         SaveSettings();
 
         var platform = PlatformDetector.FromHost(uri.Host);
         var site = PlatformDetector.DisplayName(platform);
         var cookies = CookiesFor(platform) is { } c && File.Exists(c) ? c : null;
         var cookieName = Path.GetFileName(cookies) ?? "none";
-        var request = new Downloader.Request(platform, uri, Mode, SelectedQuality.MaxHeight, outDir, cookies, _cover.Checked);
-        bool instagramAuto = Downloader.IsInstagramAuto(request);
+        var kind = chapters == null ? PlatformDetector.Kind(uri) : LinkKind.Single;
+        List<PlaylistEntry>? items = null;
+        string listTitle = "";
+        if (kind != LinkKind.Single)
+        {
+            var listing = await ListAsync(uri, platform, cookies, kind);
+            if (listing == null) return;
+            if (listing.IsList)
+            {
+                var picked = PickFromList(listing, uri, kind);
+                if (picked == null) return;
+                if (picked.Count == 1) uri = new Uri(picked[0].Url);
+                else (items, listTitle) = (picked, listing.Title);
+            }
+        }
+        IReadOnlyList<Section>? sections = chapters ?? (fragment != null ? [fragment] : null);
+        bool fragmentDropped = items != null && sections != null, newFolder = false;
+        if (items != null)
+        {
+            outDir = Path.Combine(outDir, Section.SafeName(listTitle.Length > 0 ? listTitle : "Playlist", 100));
+            newFolder = !Directory.Exists(outDir);
+            if (!CreateFolder(outDir)) return;
+        }
+
+        var subtitles = SelectedSubtitles;
+        var request = new Downloader.Request(platform, uri, Mode, SelectedQuality.MaxHeight, outDir, cookies, _cover.Checked)
+        {
+            Items = items?.Select(i => i.Url).ToList(),
+            Sections = items == null ? sections : null,
+            Subtitles = subtitles,
+        };
+        bool instagramAuto = Downloader.IsInstagramAuto(request) && items == null;
         var quality = SelectedQuality.Label.ToLowerInvariant();
-        var what = request.Mode == DownloadMode.Audio ? "audio (mp3)"
+        var what = request.Mode == DownloadMode.Audio ? "audio (m4a, original)"
+                 : request.Mode == DownloadMode.Mp3 ? "audio (mp3)"
                  : instagramAuto ? $"photos and videos (post type detected automatically), {quality}"
                  : $"video (mp4), {quality}";
+        if (items != null) what = $"{Count(items.Count, "video", "videos")} from \"{listTitle}\", {what}";
+        if (request.Sections is { } parts)
+            what += parts[0].Title != null ? $", {Count(parts.Count, "chapter", "chapters")}" : $", fragment {parts[0].Describe}";
+        if (!subtitles.IsNone) what += $", {subtitles.Name} subtitles";
         var loginProblem = Hints.LoginProblem.None;
+        (string Title, ToolTipIcon Icon)? notice = null;
 
         await RunBusyAsync("Download", async ct =>
         {
@@ -964,16 +1347,19 @@ public sealed class MainForm : Form
             _showFile.Enabled = false;
             _hideNoVideoWarnings = instagramAuto;
             Log($"{site} | {what} | {uri.AbsoluteUri}");
+            if (items != null) Log("Folder: " + outDir);
+            if (fragmentDropped) Log("The fragment boxes apply to a single video, so whole videos are downloaded.");
             if (cookies != null) Log("Cookies: " + cookieName);
             if (platform == Platform.YouTube && cookies != null && !CookieFile.Analyze(cookies).YouTubeLoggedIn)
                 Log("Warning: these YouTube cookies are not signed in, so age-restricted videos won't download.");
             Log("");
             ShowStatus("Preparing download...", NeutralColor);
             UsageLog.Write($"Download started: {uri.AbsoluteUri} | {site} | {what} | cookies: {cookieName} | folder: {outDir}");
-            StartHeartbeat();
+            StartHeartbeat("Preparing download", items?.Count ?? 0);
 
             var r = await Downloader.RunAsync(request, line => PostToUi(() => OnOutput(line)), ct);
-            if (r.ExitCode != 0)
+            bool partial = r.ExitCode != 0 && items != null && r.Saved.Count > 0;
+            if (r.ExitCode != 0 && !partial)
             {
                 var (hint, login) = Hints.Diagnose(r.Output, platform);
                 ShowStatus((r.Photos > 0 ? $"Photos saved ({r.Photos}), but the videos failed. " : "Failed. ") +
@@ -983,36 +1369,100 @@ public sealed class MainForm : Form
                          $"yt-dlp: {YtDlp.Locate().Description} | cookies: {cookieName}\n" + ErrorLog.Tail(r.Output));
                 Log("-> Details saved to " + ErrorLog.FilePath);
                 loginProblem = login;
+                notice = ("Download failed", ToolTipIcon.Error);
                 return;
             }
 
-            _progress.Value = _progress.Maximum;
+            ShowProgress(_progress.Maximum);
             _lastFile = r.Saved.FirstOrDefault();
             _showFile.Enabled = _lastFile != null && File.Exists(_lastFile);
             var first = Path.GetFileName(_lastFile) ?? "";
             var kinds = Describe(r.Photos, r.Videos);
             var coverNote = r.Covers.Count switch { 0 => "", 1 => " + cover", var n => $" + {n} covers" };
             var got = r.Videos == 1 && request.Mode == DownloadMode.Video && r.Resolution is { } res && !first.Contains(res) ? $" ({res})" : "";
+            bool wantedSubtitles = !subtitles.IsNone && platform != Platform.Instagram && r.Videos > 0;
+            var subtitlesNote = r.Subtitles.Count > 0 ? " + subtitles" : wantedSubtitles ? $" (no {subtitles.Name} subtitles)" : "";
             if (r.Saved.Count == 0)
                 ShowStatus(instagramAuto ? "Nothing to download in this post." : "Done.", instagramAuto ? WarnColor : OkColor);
             else
-                ShowStatus(r.Saved.Count == 1 ? $"Done: {first}{got}{coverNote}" : $"Done: {kinds} ({first} and {r.Saved.Count - 1} more){coverNote}", OkColor);
+                ShowStatus((r.Saved.Count == 1 ? $"Done: {first}{got}" : $"Done: {kinds} ({first} and {r.Saved.Count - 1} more)") + coverNote + subtitlesNote, OkColor);
+            notice = partial || (instagramAuto && r.Saved.Count == 0) ? ("Download finished with problems", ToolTipIcon.Warning) : ("Download finished", ToolTipIcon.Info);
 
-            if (instagramAuto && r.Saved.Count > 0)
+            if ((instagramAuto || items != null || request.Sections != null) && r.Saved.Count > 0)
             {
                 Log("");
-                Log($"Post: {kinds}");
+                if (instagramAuto) Log($"Post: {kinds}");
                 foreach (var f in r.Saved) Log("Saved: " + f);
             }
             foreach (var cover in r.Covers) Log("Cover: " + cover);
+            foreach (var sub in r.Subtitles) Log("Subtitles: " + sub);
+            if (wantedSubtitles && r.Subtitles.Count == 0)
+                Log($"-> No {subtitles.Name} subtitles: the site has none for this video.");
             if (request.SaveCover && r.Covers.Count == 0 && r.Videos > 0)
                 Log("-> No cover was saved: the site didn't provide one.");
+            if (partial)
+            {
+                var (hint, _) = Hints.Diagnose(r.Output, platform);
+                ShowStatus(PartialStatus(r.Videos, items!.Count, r.Failed, hint), WarnColor);
+                if (hint != null) Log("-> " + hint);
+                LogError("DOWNLOAD ERROR", $"{site} | {what} | {uri.AbsoluteUri} | {r.Failed} of {items.Count} failed",
+                         $"yt-dlp: {YtDlp.Locate().Description} | cookies: {cookieName}\n" + ErrorLog.Tail(r.Output));
+            }
             UsageLog.Write((r.Saved.Count > 0
-                ? $"Download finished: {kinds}: {string.Join(", ", r.Saved.Select(Path.GetFileName))}"
+                ? $"Download finished: {kinds}: {string.Join(", ", r.Saved.Take(30).Select(Path.GetFileName))}{(r.Saved.Count > 30 ? ", ..." : "")}"
                 : "Download finished: nothing saved") +
-                (r.Covers.Count > 0 ? $" | covers: {string.Join(", ", r.Covers.Select(Path.GetFileName))}" : ""));
+                (partial ? $" | {r.Failed} failed" : "") +
+                (r.Covers.Count > 0 ? $" | covers: {string.Join(", ", r.Covers.Select(Path.GetFileName))}" : "") +
+                (r.Subtitles.Count > 0 ? $" | subtitles: {string.Join(", ", r.Subtitles.Select(Path.GetFileName))}" : ""));
         });
-        if (loginProblem != Hints.LoginProblem.None && !IsDisposed) ShowLoginProblem(loginProblem, platform, cookies);
+        if (newFolder) DeleteIfEmpty(outDir);
+        if (IsDisposed) return;
+        if (notice is { } n) Notify(n.Title, _status.Text, n.Icon);
+        if (loginProblem != Hints.LoginProblem.None) ShowLoginProblem(loginProblem, platform, cookies);
+    }
+
+    static void DeleteIfEmpty(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    NotifyIcon? _tray;
+    static readonly bool QuietNotifications = Environment.GetEnvironmentVariable("NYADOWNLOADER_QUIET") == "1";
+
+    void Notify(string title, string text, ToolTipIcon icon)
+    {
+        if (ContainsFocus && WindowState != FormWindowState.Minimized) return;
+        if (text.Length > 200) text = text[..197] + "...";
+        UsageLog.Write($"Notified: {title} | {text}" + (QuietNotifications ? " (quiet)" : ""));
+        if (QuietNotifications) return;
+        try
+        {
+            if (_tray == null)
+            {
+                _tray = new NotifyIcon { Icon = Icon ?? SystemIcons.Application, Text = AppInfo.Name };
+                _tray.BalloonTipClicked += (_, _) => BringBack();
+                _tray.MouseClick += (_, _) => BringBack();
+                _tray.BalloonTipClosed += (_, _) => _tray.Visible = false;
+            }
+            _tray.Visible = true;
+            _tray.ShowBalloonTip(8000, title, text, icon);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ExternalException)
+        {
+            UsageLog.Write("Notification failed: " + ex.Message);
+        }
+    }
+
+    void BringBack()
+    {
+        if (_tray != null) _tray.Visible = false;
+        if (IsDisposed) return;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
     }
 
     void ShowLoginProblem(Hints.LoginProblem problem, Platform platform, string? cookies)
@@ -1060,13 +1510,19 @@ public sealed class MainForm : Form
     readonly System.Windows.Forms.Timer _heartbeat = new() { Interval = 1000 };
     DateTime _runStarted, _lastProgressAt, _lastProgressLogAt;
     string _phase = "Preparing download";
-    int _progressLineStart = -1;
+    string? _fixedPhase;
+    int _progressLineStart = -1, _itemIndex, _itemCount;
+    static readonly Regex ExtractingRx = new(@"^\[[\w:]+\] Extracting URL: ", RegexOptions.Compiled);
 
-    void StartHeartbeat()
+    string ItemPrefix => _itemCount > 1 && _itemIndex > 0 ? $"Video {_itemIndex} of {_itemCount}: " : "";
+
+    void StartHeartbeat(string phase, int items = 0)
     {
         _runStarted = DateTime.Now;
         _lastProgressAt = _lastProgressLogAt = DateTime.MinValue;
-        _phase = "Preparing download";
+        _phase = phase;
+        _fixedPhase = null;
+        (_itemIndex, _itemCount) = (0, items);
         SetIndeterminate(true);
         _heartbeat.Start();
     }
@@ -1081,7 +1537,7 @@ public sealed class MainForm : Form
     {
         if ((DateTime.Now - _lastProgressAt).TotalSeconds < 1.5) return;
         SetIndeterminate(true);
-        ShowStatus($"{_phase}... {(int)(DateTime.Now - _runStarted).TotalSeconds}s", NeutralColor);
+        ShowStatus($"{ItemPrefix}{_phase}... {(int)(DateTime.Now - _runStarted).TotalSeconds}s", NeutralColor);
     }
 
     void SetIndeterminate(bool on)
@@ -1090,10 +1546,23 @@ public sealed class MainForm : Form
         if (_progress.Style == style) return;
         _progress.Style = style;
         if (on) _progress.MarqueeAnimationSpeed = 30;
+        _taskbar.Set(this, on ? TaskbarProgress.State.Indeterminate : TaskbarProgress.State.Normal, _progress.Value);
     }
+
+    void ShowProgress(int perMille)
+    {
+        _progress.Value = Math.Clamp(perMille, 0, _progress.Maximum);
+        if (_progress.Style == ProgressBarStyle.Continuous) _taskbar.Set(this, TaskbarProgress.State.Normal, _progress.Value);
+    }
+
+    void ShowResultOnTaskbar() =>
+        _taskbar.Set(this, _status.ForeColor == ErrorColor ? TaskbarProgress.State.Error
+                         : _status.ForeColor == WarnColor ? TaskbarProgress.State.Paused
+                         : TaskbarProgress.State.None, 1000);
 
     string? PhaseFor(string line) =>
         line == Downloader.RetryNote ? "Network error, trying again" :
+        line.StartsWith(Downloader.CutNote, StringComparison.Ordinal) ? "Cutting the fragment" :
         line.Contains("Solving JS challenges") ? "YouTube: solving the JS challenge" :
         line.Contains("Downloading item") ? "Downloading post items" :
         line.StartsWith("[download] Destination") ? "Starting download" :
@@ -1134,11 +1603,12 @@ public sealed class MainForm : Form
             {
                 _lastProgressAt = DateTime.Now;
                 SetIndeterminate(false);
-                _progress.Value = Math.Clamp((int)(pct * 10), 0, _progress.Maximum);
+                var overall = _itemCount > 1 && _itemIndex > 0 ? ((_itemIndex - 1) * 100 + pct) / _itemCount : pct;
+                ShowProgress((int)(overall * 10));
                 var text = $"{pct.ToString("0.0", CultureInfo.InvariantCulture)}%";
                 if (parts.Length > 1 && IsKnown(parts[1])) text += ", " + parts[1].Trim();
                 if (parts.Length > 2 && IsKnown(parts[2])) text += ", " + parts[2].Trim() + " left";
-                ShowStatus("Downloading: " + text, NeutralColor);
+                ShowStatus(ItemPrefix + "Downloading: " + text, NeutralColor);
                 if (pct >= 100 || (DateTime.Now - _lastProgressLogAt).TotalMilliseconds >= 250)
                 {
                     _lastProgressLogAt = DateTime.Now;
@@ -1148,18 +1618,21 @@ public sealed class MainForm : Form
             return;
         }
         if (line.StartsWith("[info] Writing '%(") || line.StartsWith("[MetadataParser]")) return;
+        if (_itemCount > 1 && ExtractingRx.IsMatch(line)) _itemIndex = Math.Min(_itemIndex + 1, _itemCount);
+        if (line == Downloader.RetryNote) _itemIndex = 0;
+        if (line == Downloader.SubtitlesNote) (_fixedPhase, _itemCount) = ("Getting subtitles", 0);
         if (_hideNoVideoWarnings &&
             (line.Contains("There is no video in this post") || line.Contains("No video formats found") ||
              line.Contains("Requested format is not available") || line.Contains("does not pass filter")))
             return;
-        if (PhaseFor(line) is { } phase)
+        if ((_fixedPhase ?? PhaseFor(line)) is { } phase)
         {
             _phase = phase;
             if ((DateTime.Now - _lastProgressAt).TotalSeconds >= 1.5 || phase != "Starting download")
             {
                 _lastProgressAt = DateTime.MinValue;
                 SetIndeterminate(true);
-                ShowStatus($"{_phase}... {(int)(DateTime.Now - _runStarted).TotalSeconds}s", NeutralColor);
+                ShowStatus($"{ItemPrefix}{_phase}... {(int)(DateTime.Now - _runStarted).TotalSeconds}s", NeutralColor);
             }
         }
         Log(line);
@@ -1180,13 +1653,14 @@ public sealed class MainForm : Form
 
     void SetBusy(bool busy)
     {
-        foreach (var c in new Control[] { _download, _setup, _update, _updateNow, _cookiesPick, _cookiesClear, _outPick, _video, _audio, _cover })
+        foreach (var c in new Control[] { _download, _setup, _update, _updateNow, _appUpdateNow, _cookiesPick, _cookiesClear, _outPick, _video, _m4a, _mp3, _cover, _subtitles, _chapters })
             c.Enabled = !busy;
         _cancel.Enabled = busy;
-        _url.ReadOnly = _outDir.ReadOnly = busy;
+        _url.ReadOnly = _outDir.ReadOnly = _from.ReadOnly = _to.ReadOnly = busy;
         _quality.Enabled = !busy && Mode == DownloadMode.Video;
         if (busy) return;
         StopHeartbeat();
+        ShowResultOnTaskbar();
         UpdateCookiesView();
         FocusLink();
     }

@@ -20,6 +20,10 @@ sealed class LocalHttp : IDisposable
 
     public string Url(string name) => $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}/{name}";
 
+    public void Add(string name, byte[] body) => _files[name] = body;
+
+    public TimeSpan Delay { get; init; }
+
     async Task ServeAsync()
     {
         while (true)
@@ -35,6 +39,7 @@ sealed class LocalHttp : IDisposable
                     var request = await reader.ReadLineAsync() ?? "";
                     while (!string.IsNullOrEmpty(await reader.ReadLineAsync())) { }
                     var name = request.Split(' ') is [_, var path, ..] ? path.TrimStart('/') : "";
+                    if (Delay > TimeSpan.Zero) await Task.Delay(Delay);
                     var found = _files.TryGetValue(name, out var body);
                     var head = found ? $"HTTP/1.1 200 OK\r\nContent-Length: {body!.Length}\r\nConnection: close\r\n\r\n"
                                      : "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";

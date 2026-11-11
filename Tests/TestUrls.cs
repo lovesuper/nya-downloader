@@ -7,6 +7,12 @@ static class TestUrls
     public const string YouTubeId = "6ItexNkuSJg";
     public const string YouTubeAgeRestricted = "https://www.youtube.com/watch?v=M6vD-iLc_PI";
     public const string YouTubeLong = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+    public const string YouTubeInPlaylist = "https://www.youtube.com/watch?v=nBwADVXLHwg&list=PL7FAuHvhKY86Itb81N03ficveT4QFN2y3";
+    public const string YouTubePlaylist = "https://www.youtube.com/playlist?list=PL7FAuHvhKY86Itb81N03ficveT4QFN2y3";
+    public const string YouTubePlaylistTitle = "История серии Mega Man / Disney";
+    public const string YouTubeChapters = "https://youtu.be/2NJw2T98yMk";
+    public const string YouTubeMissing = "https://www.youtube.com/watch?v=aaaaaaaaaaa";
+    public const string TikTokProfile = "https://www.tiktok.com/@footage_me1";
     public const string TikTok = "https://www.tiktok.com/@footage_me1/video/7689177252239674631";
     public const string TikTokFile = "footage_me1_7689177252239674631";
     public const string InstagramCarousel = "https://www.instagram.com/p/DfkeBxnFJh3/";

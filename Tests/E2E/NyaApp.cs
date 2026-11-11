@@ -26,15 +26,18 @@ sealed class NyaApp : IDisposable
 
     static NyaApp() => SetProcessDpiAwarenessContext(-4);
 
-    public NyaApp(Action<Settings>? seed = null, bool waitForStartup = true, (string Name, string Value)[]? env = null)
+    public const string NoUpdates = "http://127.0.0.1:9/no-updates";
+
+    public NyaApp(Action<Settings>? seed = null, bool waitForStartup = true, (string Name, string Value)[]? env = null, string? exe = null)
     {
-        Assert.True(File.Exists(Exe), $"Publish the app first (dotnet publish -c Release -o publish): {Exe}");
+        exe ??= Exe;
+        Assert.True(File.Exists(exe), $"Publish the app first (dotnet publish -c Release -o publish): {exe}");
         var settings = new Settings { OutputDir = Out.Path, MaxHeight = 360 };
         seed?.Invoke(settings);
         File.WriteAllText(Path.Combine(Data.Path, "settings.json"), JsonSerializer.Serialize(settings));
 
         LockSetForegroundWindow(1);
-        Process = StartMinimizedNoActivate(Exe, [("NYADOWNLOADER_DATA", Data.Path), .. env ?? []]);
+        Process = StartMinimizedNoActivate(exe, [("NYADOWNLOADER_DATA", Data.Path), ("NYADOWNLOADER_UPDATES_URL", NoUpdates), ("NYADOWNLOADER_STILL", "1"), ("NYADOWNLOADER_QUIET", "1"), .. env ?? []]);
         _watchdog = new System.Threading.Timer(_ => GuardFocus(), null, 0, 50);
         try
         {
@@ -88,6 +91,28 @@ sealed class NyaApp : IDisposable
         PostMessage(h, 0x0101, 0x20, unchecked((nint)0xC0390001));
         Thread.Sleep(400);
     }
+    public IntPtr WaitForWindow(string title, double seconds)
+    {
+        var h = IntPtr.Zero;
+        WaitFor(() => (h = FindWindow(null, title)) != IntPtr.Zero && IsWindowVisible(h), seconds, $"the \"{title}\" window");
+        return h;
+    }
+
+    public static AutomationElement In(IntPtr window, string id) =>
+        AutomationElement.FromHandle(window).FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, id))
+        ?? throw new InvalidOperationException($"no control '{id}'");
+
+    public static void Key(IntPtr hwnd, int vk)
+    {
+        uint scan = MapVirtualKey((uint)vk, 0);
+        nint extended = vk is 0x21 or 0x22 or 0x23 or 0x24 or 0x25 or 0x26 or 0x27 or 0x28 ? 1 << 24 : 0;
+        PostMessage(hwnd, 0x0100, vk, 1 | (nint)(scan << 16) | extended);
+        PostMessage(hwnd, 0x0101, vk, unchecked(1 | (nint)(scan << 16) | extended | (nint)0xC0000000));
+        Thread.Sleep(150);
+    }
+
+    public static void PressIn(IntPtr window, string id) => Key(Hwnd(In(window, id)), 0x20);
+
     public bool IsSelected(string id) => ((SelectionItemPattern)El(id).GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected;
     public bool IsChecked(string id) => ((TogglePattern)El(id).GetCurrentPattern(TogglePattern.Pattern)).Current.ToggleState == ToggleState.On;
     public string Quality => Value("quality");
@@ -127,13 +152,14 @@ sealed class NyaApp : IDisposable
         return Text("status");
     }
 
-    public Bitmap Screenshot()
+    public Bitmap Screenshot(IntPtr window = default)
     {
-        GetWindowRect(Handle, out var r);
+        if (window == IntPtr.Zero) window = Handle;
+        GetWindowRect(window, out var r);
         var bmp = new Bitmap(r.Right - r.Left, r.Bottom - r.Top);
         using var g = Graphics.FromImage(bmp);
         var hdc = g.GetHdc();
-        PrintWindow(Handle, hdc, 2);
+        PrintWindow(window, hdc, 0);
         g.ReleaseHdc(hdc);
         return bmp;
     }
@@ -206,6 +232,8 @@ sealed class NyaApp : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern nint SendMessage(IntPtr h, int msg, nint w, string l);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, int msg, nint w, nint l);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string? cls, string title);
@@ -219,5 +247,5 @@ sealed class NyaApp : IDisposable
     [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public int cbSize; public uint dwTime; }
     [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
 }

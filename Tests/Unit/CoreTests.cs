@@ -167,9 +167,14 @@ public class DownloadPlanTests
         var a = Build(Platform.YouTube);
         Assert.Equal(["--", "https://example.com/v"], a.TakeLast(2));
         Assert.Equal(Out, After(a, "-P"));
-        Assert.Equal("after_move:%(resolution)s|%(filepath)s", After(a, "--print-to-file"));
+        Assert.Equal("after_move:%(id)s|%(duration)s|%(resolution)s|%(filepath)s", After(a, "--print-to-file"));
         Assert.Equal(Final, a[a.IndexOf("--print-to-file") + 2]);
         Assert.StartsWith("download:" + DownloadPlan.ProgressPrefix, After(a, "--progress-template"));
+        Assert.EndsWith("|%(info.format_id)s", After(a, "--progress-template"));
+        Assert.Single(a, x => x == "--print-to-file");
+        var sized = DownloadPlan.Build(Platform.YouTube, "u", DownloadMode.Video, 0, Out, null, null, null, Final, sizesFile: @"C:\tmp\sizes.txt");
+        Assert.Equal(2, sized.Count(x => x == "--print-to-file"));
+        Assert.Equal([DownloadPlan.SizesTemplate, @"C:\tmp\sizes.txt"], sized.Skip(sized.LastIndexOf("--print-to-file") + 1).Take(2));
         Assert.Contains("--no-playlist", a);
         Assert.Equal(["title", "!", ""], a.Skip(a.IndexOf("--replace-in-metadata") + 1).Take(3));
         Assert.DoesNotContain("--cookies", a);
@@ -198,15 +203,27 @@ public class DownloadPlanTests
     }
 
     [Fact]
-    public void Audio_is_mp3_320_and_ignores_the_quality()
+    public void Mp3_is_variable_bitrate_and_ignores_the_quality()
     {
-        var a = Build(Platform.YouTube, DownloadMode.Audio, maxHeight: 720);
+        var a = Build(Platform.YouTube, DownloadMode.Mp3, maxHeight: 720);
         Assert.Equal("ba/b", After(a, "-f"));
         Assert.Contains("-x", a);
         Assert.Equal("mp3", After(a, "--audio-format"));
-        Assert.Equal("320K", After(a, "--audio-quality"));
+        Assert.Equal("2", After(a, "--audio-quality"));
         Assert.Equal("%(title).120B [%(id)s].%(ext)s", After(a, "-o"));
         Assert.DoesNotContain("-S", a);
+    }
+
+    [Fact]
+    public void Original_audio_is_extracted_without_re_encoding()
+    {
+        var a = Build(Platform.YouTube, DownloadMode.Audio, maxHeight: 720);
+        Assert.Equal("ba[ext=m4a]/ba/b", After(a, "-f"));
+        Assert.Contains("-x", a);
+        Assert.DoesNotContain("--audio-format", a);
+        Assert.DoesNotContain("--audio-quality", a);
+        Assert.Equal("%(title).120B [%(id)s].%(ext)s", After(a, "-o"));
+        Assert.Equal("b", After(Build(Platform.TikTok, DownloadMode.Audio), "-f"));
     }
 
     [Fact]
@@ -224,6 +241,7 @@ public class DownloadPlanTests
     public void TikTok_audio_gets_its_own_name()
     {
         Assert.Equal("%(uploader)s_%(id)s_audio.%(ext)s", After(Build(Platform.TikTok, DownloadMode.Audio), "-o"));
+        Assert.Equal("%(uploader)s_%(id)s_audio.%(ext)s", After(Build(Platform.TikTok, DownloadMode.Mp3), "-o"));
     }
 
     [Fact]
@@ -275,18 +293,19 @@ public class OutputParsingTests
     }
 
     [Fact]
-    public void ParseFinal_reads_resolution_and_path()
+    public void ParseFinal_reads_id_duration_resolution_and_path()
     {
         using var dir = new TempDir();
         var file = dir.File("final.txt",
-            "640x360|C:\\out\\a 640x360.mp4\n" +
-            "NA|C:\\out\\b.mp4\n" +
-            "audio only|C:\\out\\c.mp3\n" +
+            "abc|212.5|640x360|C:\\out\\a 640x360.mp4\n" +
+            "def|NA|NA|C:\\out\\b.mp4\n" +
+            "ghi|61|audio only|C:\\out\\c.mp3\n" +
             "\n" +
-            "640x360|C:\\out\\a 640x360.mp4\n" +
+            "abc|212.5|640x360|C:\\out\\a 640x360.mp4\n" +
             "C:\\out\\d.mp4\n");
         Assert.Equal(
-            [("C:\\out\\a 640x360.mp4", "640x360"), ("C:\\out\\b.mp4", null), ("C:\\out\\c.mp3", null), ("C:\\out\\d.mp4", null)],
+            [new SavedFile("C:\\out\\a 640x360.mp4", "abc", "640x360", 212.5), new SavedFile("C:\\out\\b.mp4", "def"),
+             new SavedFile("C:\\out\\c.mp3", "ghi", null, 61), new SavedFile("C:\\out\\d.mp4")],
             DownloadPlan.ParseFinal(file));
     }
 
@@ -319,6 +338,7 @@ public class HintsTests
     [InlineData("ERROR: [TikTok] x: This post is age-restricted", Platform.TikTok, Hints.LoginProblem.AgeRestricted, "TikTok only shows it")]
     [InlineData("ERROR: [TikTok] x: Your IP address is blocked from accessing this post", Platform.TikTok, Hints.LoginProblem.None, "VPN")]
     [InlineData("ERROR: [youtube] x: Video unavailable. This video has been removed by the uploader", Platform.YouTube, Hints.LoginProblem.None, "removed")]
+    [InlineData("ERROR: [youtube] aaaaaaaaaaa: This video is unavailable", Platform.YouTube, Hints.LoginProblem.None, "removed")]
     [InlineData("ERROR: Unsupported URL: https://example.com/", Platform.Unknown, Hints.LoginProblem.None, "not supported")]
     [InlineData("ERROR: Postprocessing: ffprobe and ffmpeg not found.", Platform.YouTube, Hints.LoginProblem.None, "ffmpeg not found")]
     [InlineData("C:\\Python\\python.exe: No module named yt_dlp", Platform.YouTube, Hints.LoginProblem.None, "Install components")]

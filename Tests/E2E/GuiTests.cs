@@ -60,8 +60,7 @@ public class GuiTests
     public void On_a_fresh_PC_it_runs_and_offers_to_install_what_is_missing()
     {
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        using var app = new NyaApp(env: [("PATH", $@"{windows}\System32;{windows}"), ("DOTNET_ROOT", @"C:
-o-dotnet-here")]);
+        using var app = new NyaApp(env: [("PATH", $@"{windows}\System32;{windows}"), ("DOTNET_ROOT", @"C:\no-dotnet-here")]);
         Assert.Equal("Missing: yt-dlp, ffmpeg, Deno (for YouTube). Click Install components.", app.Text("engine"));
         Assert.True(app.Shown("setup"));
         Assert.Equal("Install components (~148 MB)", app.Text("setup"));
@@ -132,6 +131,105 @@ o-dotnet-here")]);
         }
     }
 
+    [Fact]
+    public void Background_is_a_half_visible_soft_blur()
+    {
+        using var app = new NyaApp(s => s.Look = new BackgroundLook { Visibility = 50, Blur = 40 });
+        Thread.Sleep(1500);
+        using var shot = app.Screenshot();
+        var download = app.RectInWindow(app.El("download"));
+        var showFile = app.RectInWindow(app.El("showFile"));
+        int y0 = download.Top + download.Height / 2 - 4, x0 = showFile.Right + 40, x1 = shot.Width - 90;
+        Assert.True(x1 - x0 > 200, $"no free space next to the buttons ({x0}..{x1})");
+        int darkest = 255, steepest = 0;
+        for (int y = y0; y < y0 + 8; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                Color c = shot.GetPixel(x, y), next = shot.GetPixel(x + 1, y);
+                darkest = Math.Min(darkest, Math.Min(c.R, Math.Min(c.G, c.B)));
+                steepest = Math.Max(steepest, Math.Abs(c.R - next.R) + Math.Abs(c.G - next.G) + Math.Abs(c.B - next.B));
+            }
+        Assert.True(darkest >= 124, $"the background is stronger than half: a channel goes down to {darkest}");
+        Assert.True(steepest <= 18, $"the background is not blurred: neighbouring pixels differ by {steepest}");
+    }
+
+    [Fact]
+    public void Liquid_glass_comes_from_the_saved_settings()
+    {
+        (Bitmap Shot, Rectangle Log, Settings Saved) Run(BackgroundLook look)
+        {
+            using var app = new NyaApp(s => s.Look = look);
+            Thread.Sleep(1500);
+            var shot = app.Screenshot();
+            var log = app.RectInWindow(app.El("logBox"));
+            Assert.True(app.CloseAndWait());
+            return (shot, log, SavedSettings(app));
+        }
+        var (plain, log, saved) = Run(new BackgroundLook { Gif = 1, Glass = 0, Highlight = 0, Frost = 0 });
+        var (glass, _, savedGlass) = Run(new BackgroundLook { Gif = 1, Glass = 100, Highlight = 100, Frost = 0 });
+        using (plain)
+        using (glass)
+        {
+            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 0, highlight 0%, frost 0%, ice 0", saved.Look.ToString());
+            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 0%, ice 0", savedGlass.Look.ToString());
+            int changed = 0, brightest = 0, brightestPlain = 0;
+            for (int y = log.Top + 20; y < log.Bottom - 20; y += 2)
+                for (int x = 0; x < log.Left - 2; x++)
+                {
+                    Color p = plain.GetPixel(x, y), g = glass.GetPixel(x, y);
+                    if (Math.Abs(p.R - g.R) + Math.Abs(p.G - g.G) + Math.Abs(p.B - g.B) > 12) changed++;
+                    brightest = Math.Max(brightest, g.R + g.G + g.B);
+                    brightestPlain = Math.Max(brightestPlain, p.R + p.G + p.B);
+                }
+            Assert.True(changed > 50, $"the glass rim next to the log changed only {changed} pixels");
+            Assert.True(brightest > brightestPlain + 30, $"no highlight on the rim: {brightest} vs {brightestPlain}");
+        }
+        Assert.Contains("background: bg1.gif (gif 1, visibility 43%, blur 0, scale 100%, glass 100", LogSince("using.log", 0));
+    }
+
+    [Fact]
+    public void Ice_frosts_the_window_edges_from_the_saved_settings()
+    {
+        (Bitmap Shot, Rectangle Log) Run(int ice)
+        {
+            using var app = new NyaApp(s => s.Look = new BackgroundLook { Gif = 1, Glass = 0, Ice = ice });
+            Thread.Sleep(ice > 0 ? 6000 : 1500);
+            var shot = app.Screenshot();
+            var log = app.RectInWindow(app.El("logBox"));
+            Assert.True(app.CloseAndWait());
+            Assert.Equal(ice, SavedSettings(app).Look.Ice);
+            return (shot, log);
+        }
+        var (clear, log) = Run(0);
+        var (iced, _) = Run(70);
+        using (clear)
+        using (iced)
+        {
+            int changed = 0, total = 0;
+            for (int y = log.Top; y < log.Bottom; y += 2)
+                for (int x = 0; x < log.Left - 2; x++)
+                {
+                    Color a = clear.GetPixel(x, y), b = iced.GetPixel(x, y);
+                    total++;
+                    if (Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B) > 15) changed++;
+                }
+            Assert.True(changed > total / 5, $"the window edge did not frost over: {changed} of {total} pixels changed");
+        }
+    }
+
+    [Fact]
+    public void Gif_keeps_playing_while_the_window_is_not_focused()
+    {
+        using var app = new NyaApp(s => s.Look = new BackgroundLook { Gif = 1, Visibility = 100, Glass = 0, Ice = 0 }, env: [("NYADOWNLOADER_STILL", "0")]);
+        Thread.Sleep(3000);
+        Assert.NotEqual(app.Handle, NyaApp.GetForegroundWindow());
+        using var first = app.Screenshot();
+        Thread.Sleep(1200);
+        using var later = app.Screenshot();
+        int changed = ChangedPixels(first, later, new Rectangle(0, 0, first.Width, first.Height));
+        Assert.True(changed > 2000, $"the background stood still without focus: {changed} pixels changed");
+    }
+
     static int ChangedPixels(Bitmap a, Bitmap b, Rectangle area)
     {
         int n = 0;
@@ -174,7 +272,7 @@ o-dotnet-here")]);
     public void Mode_quality_and_cover_come_back_and_are_saved()
     {
         using var app = new NyaApp(s => { s.AudioOnly = true; s.MaxHeight = 720; s.SaveCover = true; });
-        Assert.True(app.IsSelected("audio"));
+        Assert.True(app.IsSelected("mp3"));
         Assert.True(app.IsChecked("cover"));
         Assert.Equal("Up to 720p", app.Quality);
         Assert.False(app.Enabled("quality"), "quality means nothing for mp3");
@@ -285,18 +383,39 @@ o-dotnet-here")]);
     [Fact]
     public void TikTok_audio()
     {
+        var usingLog = LogLength("using.log");
         using var app = new NyaApp(s => s.AudioOnly = true);
         Assert.Equal($"Done: {TestUrls.TikTokFile}_audio.mp3", app.Download(TestUrls.TikTok));
         Assert.Equal([TestUrls.TikTokFile + "_audio.mp3"], app.Out.Files());
+        app.WaitFor(() => LogSince("using.log", usingLog).Contains($"Notified: Download finished | Done: {TestUrls.TikTokFile}_audio.mp3 (quiet)"), 5, "the notification");
+    }
+
+    [Fact]
+    public void Cancel_removes_the_unfinished_files_and_does_not_notify()
+    {
+        var usingLog = LogLength("using.log");
+        using var app = new NyaApp(s => s.MaxHeight = 0);
+        app.SetValue("url", TestUrls.YouTubeLong);
+        app.Press("download");
+        app.WaitFor(() => app.Text("status").StartsWith("Downloading:"), 120, "the download to start");
+        app.WaitFor(() => app.Out.Files().Any(f => Leftovers.IsTemporary(f)), 30, "an unfinished file to appear");
+        app.Press("cancel");
+        app.WaitFor(() => app.Text("status") == "Canceled.", 20, "the cancel");
+        app.WaitFor(() => Directory.GetFileSystemEntries(app.Out.Path).Length == 0, 10, "the unfinished files to go");
+        Assert.Contains("unfinished file(s)", app.Value("log"));
+        Thread.Sleep(500);
+        Assert.DoesNotContain("Notified:", LogSince("using.log", usingLog));
     }
 
     [Fact]
     public void Age_restricted_video_shows_the_cookies_dialog()
     {
         var errorLog = LogLength("error.log");
+        var usingLog = LogLength("using.log");
         using var app = new NyaApp();
         var status = app.Download(TestUrls.YouTubeAgeRestricted);
         Assert.StartsWith("Failed. This video is age-restricted.", status);
+        app.WaitFor(() => LogSince("using.log", usingLog).Contains("Notified: Download failed | Failed. This video is age-restricted."), 5, "the failure notification");
         var dialog = IntPtr.Zero;
         app.WaitFor(() => (dialog = NyaApp.FindWindow("#32770", "Age-restricted video")) != IntPtr.Zero, 10, "the dialog");
         Assert.NotEqual(dialog, NyaApp.GetForegroundWindow());

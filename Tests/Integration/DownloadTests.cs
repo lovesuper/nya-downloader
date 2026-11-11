@@ -52,7 +52,7 @@ public class DownloadTests
     public async Task YouTube_audio_is_mp3()
     {
         using var dir = new TempDir();
-        var (r, _) = await Download(TestUrls.YouTubeShort, dir.Path, DownloadMode.Audio);
+        var (r, _) = await Download(TestUrls.YouTubeShort, dir.Path, DownloadMode.Mp3);
         AssertOk(r);
         var mp3 = Assert.Single(r.Saved);
         Assert.EndsWith($"[{TestUrls.YouTubeId}].mp3", mp3);
@@ -79,7 +79,7 @@ public class DownloadTests
         AssertOk(video);
         Assert.Equal(Path.Combine(dir.Path, TestUrls.TikTokFile + ".mp4"), Assert.Single(video.Saved));
 
-        var (audio, _) = await Download(TestUrls.TikTok, dir.Path, DownloadMode.Audio);
+        var (audio, _) = await Download(TestUrls.TikTok, dir.Path, DownloadMode.Mp3);
         AssertOk(audio);
         Assert.Equal(Path.Combine(dir.Path, TestUrls.TikTokFile + "_audio.mp3"), Assert.Single(audio.Saved));
         Assert.True(File.Exists(video.Saved[0]), "extracting the audio must not delete the video");
@@ -143,6 +143,36 @@ public class DownloadTests
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
         Assert.Empty(ProcessesWorkingIn(dir.Path));
+        Assert.Empty(Directory.GetFileSystemEntries(dir.Path));
+    }
+
+    [Fact]
+    public async Task Cancelling_a_list_keeps_the_videos_that_are_done()
+    {
+        using var dir = new TempDir();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var second = new TaskCompletionSource();
+        int extracting = 0;
+        var request = new Downloader.Request(Platform.YouTube, new Uri("https://www.youtube.com/shorts/41f_EDdLubo"), DownloadMode.Video, 0, dir.Path, null, false)
+        {
+            Items = ["https://www.youtube.com/shorts/41f_EDdLubo", TestUrls.YouTubeLong],
+        };
+        var lines = new List<string>();
+        var run = Downloader.RunAsync(request, l =>
+        {
+            lock (lines) lines.Add(l);
+            if (l.Contains("Extracting URL:")) Interlocked.Increment(ref extracting);
+            if (Volatile.Read(ref extracting) >= 2 && l.StartsWith(DownloadPlan.ProgressPrefix) && !l.Contains(" 0.0%")) second.TrySetResult();
+        }, cts.Token);
+        await Task.WhenAny(second.Task, run);
+        Assert.True(second.Task.IsCompleted, "the second video never started downloading");
+        Assert.Contains(Directory.GetFiles(dir.Path), f => Leftovers.IsTemporary(Path.GetFileName(f)));
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        var left = dir.Files();
+        Assert.Single(left);
+        Assert.EndsWith("[41f_EDdLubo].mp4", left[0]);
+        Assert.Contains(lines, l => l.StartsWith("-> Removed ") && l.Contains("unfinished file"));
     }
 
     internal static string[] ProcessesWorkingIn(string dir)
