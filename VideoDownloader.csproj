@@ -12,13 +12,18 @@
     <Product>NyaDownloader</Product>
     <AssemblyTitle>NyaDownloader</AssemblyTitle>
     <Company>NyaDownloader</Company>
-    <Version>1.9.1</Version>
+    <Version>1.9.2</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TrimMode>partial</TrimMode>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <DefaultItemExcludes>$(DefaultItemExcludes);Tests\**;publish\**</DefaultItemExcludes>
@@ -26,7 +31,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="app.ico" LogicalName="app.ico" />
-    <EmbeddedResource Include="backgrounds\*.gif" LogicalName="bg/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="backgrounds\*.nyabg" LogicalName="bg/%(Filename)" />
   </ItemGroup>
 
 </Project>

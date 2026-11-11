@@ -467,7 +467,7 @@ public sealed class MainForm : Form
 
     static readonly Color PageColor = Color.White;
     string? _gifName;
-    byte[]? _gifBytes;
+    BackgroundPack? _pack;
     readonly string[] _gifNames = GifNames();
     readonly List<Control> _transparentControls = new();
     readonly System.Windows.Forms.Timer _gifTimer = new() { Interval = 125 };
@@ -515,18 +515,21 @@ public sealed class MainForm : Form
         var name = _gifNames[choice >= 1 && choice <= _gifNames.Length ? choice - 1 : Random.Shared.Next(_gifNames.Length)];
         try
         {
-            using var s = typeof(MainForm).Assembly.GetManifestResourceStream(name)!;
+            using var s = typeof(MainForm).Assembly.GetManifestResourceStream(name) ?? throw new InvalidDataException("the background is missing");
             using var ms = new MemoryStream();
             s.CopyTo(ms);
-            var bytes = ms.ToArray();
-            using var gifStream = new MemoryStream(bytes);
-            using var gif = Image.FromStream(gifStream);
-            var first = Backdrop.Frame(gif, _settings.Look.Blur);
-            (_gifBytes, _gifName) = (bytes, name[3..]);
+            var pack = BackgroundPack.Read(ms.ToArray());
+            using var image = pack.Frame(0);
+            var first = Backdrop.Frame(image, _settings.Look.Blur);
+            (_pack, _gifName) = (pack, name[3..]);
             ReplaceFrames(first, null, []);
             return true;
         }
-        catch { return false; }
+        catch (Exception e)
+        {
+            UsageLog.Write($"Background {name[3..]} could not be loaded: {e.Message}");
+            return false;
+        }
     }
 
     void ReplaceFrames(Bitmap? first, List<Bitmap>? frames, int[] delays)
@@ -540,9 +543,9 @@ public sealed class MainForm : Form
 
     void DecodeFrames()
     {
-        if (_gifBytes is not { } bytes) return;
+        if (_pack is not { } pack) return;
         int version = ++_decodeVersion, blur = _settings.Look.Blur;
-        Task.Run(() => DecodeAllFrames(bytes, blur)).ContinueWith(t =>
+        Task.Run(() => DecodeAllFrames(pack, blur)).ContinueWith(t =>
         {
             if (t.IsFaulted) return;
             var (frames, delays) = t.Result;
@@ -613,12 +616,11 @@ public sealed class MainForm : Form
             PauseGif();
             if (LoadGif(next.Gif)) DecodeFrames();
         }
-        else if (next.Blur != prev.Blur && _gifBytes != null)
+        else if (next.Blur != prev.Blur && _pack != null)
         {
             PauseGif();
-            using var ms = new MemoryStream(_gifBytes);
-            using var gif = Image.FromStream(ms);
-            ReplaceFrames(Backdrop.Frame(gif, next.Blur), null, []);
+            using var image = _pack.Frame(0);
+            ReplaceFrames(Backdrop.Frame(image, next.Blur), null, []);
             DecodeFrames();
         }
         RefreshBackground();
@@ -681,36 +683,15 @@ public sealed class MainForm : Form
         return list;
     }
 
-    static int[] FrameDelays(Image gif, int count)
+    static (List<Bitmap> Frames, int[] Delays) DecodeAllFrames(BackgroundPack pack, int blur)
     {
-        var delays = Enumerable.Repeat(100, count).ToArray();
-        try
+        var frames = new List<Bitmap>(pack.Count);
+        for (int i = 0; i < pack.Count; i++)
         {
-            var raw = gif.GetPropertyItem(0x5100)?.Value;
-            if (raw != null)
-                for (int i = 0; i < count && i * 4 + 3 < raw.Length; i++)
-                {
-                    int d = BitConverter.ToInt32(raw, i * 4) * 10;
-                    delays[i] = d < 20 ? 100 : d;
-                }
+            using var image = pack.Frame(i);
+            frames.Add(Backdrop.Frame(image, blur));
         }
-        catch { }
-        return delays;
-    }
-
-    static (List<Bitmap> Frames, int[] Delays) DecodeAllFrames(byte[] data, int blur)
-    {
-        using var ms = new MemoryStream(data);
-        using var gif = Image.FromStream(ms);
-        var dim = FrameDimension.Time;
-        int count = gif.GetFrameCount(dim);
-        var frames = new List<Bitmap>(count);
-        for (int i = 0; i < count; i++)
-        {
-            gif.SelectActiveFrame(dim, i);
-            frames.Add(Backdrop.Frame(gif, blur));
-        }
-        return (frames, FrameDelays(gif, count));
+        return (frames, pack.Delays);
     }
 
     void MakeTransparent(Control root)

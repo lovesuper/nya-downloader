@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace VideoDownloader;
@@ -1289,6 +1290,10 @@ public sealed class BackgroundLook
         $"gif {(Gif == 0 ? "random" : Gif.ToString())}, visibility {Visibility}%, blur {Blur}, scale {Scale}%, glass {Glass}, highlight {Highlight}%, frost {Frost}%, ice {Ice}, text backing {Backing}%";
 }
 
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(Settings))]
+sealed partial class SettingsJson : JsonSerializerContext;
+
 public sealed class Settings
 {
     public string? OutputDir { get; set; }
@@ -1310,7 +1315,7 @@ public sealed class Settings
         try
         {
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new Settings();
+                return JsonSerializer.Deserialize(File.ReadAllText(path), SettingsJson.Default.Settings) ?? new Settings();
         }
         catch { }
         return new Settings();
@@ -1321,7 +1326,7 @@ public sealed class Settings
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, SettingsJson.Default.Settings));
         }
         catch { }
     }

@@ -755,7 +755,7 @@ sealed class TaskbarProgress
 {
     public enum State { None = 0, Indeterminate = 1, Normal = 2, Error = 4, Paused = 8 }
 
-    [ComImport, Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eee6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [ComImport, Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface ITaskbarList3
     {
         void HrInit();
@@ -824,18 +824,28 @@ sealed class TaskbarProgress
         if (_failed) return;
         try
         {
-            if (_list == null)
-            {
-                _list = (ITaskbarList3)new TaskbarList();
-                _list.HrInit();
-            }
+            _list ??= Create();
             _list.SetProgressState(window, (int)state);
             if (state is State.Normal or State.Error or State.Paused) _list.SetProgressValue(window, (ulong)value, 1000);
         }
         catch (Exception e) when (e is COMException or InvalidCastException or NotSupportedException)
         {
             _failed = true;
+            UsageLog.Write("Taskbar progress is unavailable: " + e.Message.Split('\n')[0].Trim());
         }
+    }
+
+    static ITaskbarList3 Create()
+    {
+        var list = (ITaskbarList3)new TaskbarList();
+        list.HrInit();
+        return list;
+    }
+
+    internal static void CheckAvailable()
+    {
+        var list = Create();
+        Marshal.ReleaseComObject(list);
     }
 }
 

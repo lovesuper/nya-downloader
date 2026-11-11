@@ -23,6 +23,7 @@ sealed class NyaApp : IDisposable
     public bool EverForeground { get; private set; }
     public bool StartedMinimized { get; }
     int _msSinceUserInput = int.MaxValue;
+    volatile bool _offScreen;
 
     static NyaApp() => SetProcessDpiAwarenessContext(-4);
 
@@ -55,6 +56,7 @@ sealed class NyaApp : IDisposable
             wp.showCmd = 4;
             SetWindowPlacement(Handle, ref wp);
             SetWindowPos(Handle, 0, screen.Left - w - 200, screen.Top + 100, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            _offScreen = true;
             Root = AutomationElement.FromHandle(Handle);
             if (waitForStartup) WaitFor(() => Text("engine").Length > 0, 30, "the yt-dlp check at startup");
         }
@@ -119,6 +121,7 @@ sealed class NyaApp : IDisposable
 
     void GuardFocus()
     {
+        KeepOffScreen();
         var fg = GetForegroundWindow();
         GetWindowThreadProcessId(fg, out var pid);
         if (pid != Process.Id) return;
@@ -126,6 +129,14 @@ sealed class NyaApp : IDisposable
         var input = new LASTINPUTINFO { cbSize = Marshal.SizeOf<LASTINPUTINFO>() };
         if (GetLastInputInfo(ref input)) _msSinceUserInput = Math.Min(_msSinceUserInput, Environment.TickCount - (int)input.dwTime);
         SetForegroundWindow(_userWindow);
+    }
+
+    void KeepOffScreen()
+    {
+        if (!_offScreen || !GetWindowRect(Handle, out var r)) return;
+        var screen = System.Windows.Forms.SystemInformation.VirtualScreen;
+        if (r.Right <= screen.Left) return;
+        SetWindowPos(Handle, 0, screen.Left - (r.Right - r.Left) - 200, r.Top, 0, 0, 0x0001 | 0x0004 | 0x0010);
     }
 
     public void WaitFor(Func<bool> done, double seconds, string what)

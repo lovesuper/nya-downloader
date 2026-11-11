@@ -237,6 +237,17 @@ public class SubtitlePickTests
 public class TaskbarAndStatusTests
 {
     [Fact]
+    public void Windows_gives_us_the_real_taskbar_progress_interface()
+    {
+        var error = MainFormLayoutTests.OnSta(() =>
+        {
+            try { TaskbarProgress.CheckAvailable(); return null; }
+            catch (Exception e) { return e.Message; }
+        });
+        Assert.Null(error);
+    }
+
+    [Fact]
     public void Taskbar_state_follows_what_it_is_told()
     {
         var t = new TaskbarProgress();

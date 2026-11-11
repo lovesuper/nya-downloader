@@ -107,7 +107,7 @@ sealed class LogView : Control
         var text = SelectedText;
         if (text.Length == 0) return;
         try { Clipboard.SetText(text); }
-        catch (ExternalException) { }
+        catch (ExternalException e) { UsageLog.Write("Copy from the log failed: " + e.Message); }
     }
 
     public void ScrollTo(int row)
@@ -360,6 +360,13 @@ sealed class LogView : Control
         while (b < s.Length && !char.IsWhiteSpace(s[b])) b++;
         (_anchor, _caret) = ((line, a), (line, b));
         Invalidate();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_COPY = 0x0301;
+        if (m.Msg == WM_COPY) { Copy(); return; }
+        base.WndProc(ref m);
     }
 
     protected override AccessibleObject CreateAccessibilityInstance() => new LogAccessible(this);

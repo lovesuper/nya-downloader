@@ -184,7 +184,7 @@ public class GuiTests
             Assert.True(changed > 50, $"the glass rim next to the log changed only {changed} pixels");
             Assert.True(brightest > brightestPlain + 30, $"no highlight on the rim: {brightest} vs {brightestPlain}");
         }
-        Assert.Contains("background: bg1.gif (gif 1, visibility 43%, blur 0, scale 100%, glass 100", LogSince("using.log", 0));
+        Assert.Contains("background: bg1 (gif 1, visibility 43%, blur 0, scale 100%, glass 100", LogSince("using.log", 0));
     }
 
     [Fact]
@@ -435,6 +435,7 @@ public class GuiTests
         Assert.Equal($"Done: {TestUrls.TikTokFile}_audio.mp3", app.Download(TestUrls.TikTok));
         Assert.Equal([TestUrls.TikTokFile + "_audio.mp3"], app.Out.Files());
         app.WaitFor(() => LogSince("using.log", usingLog).Contains($"Notified: Download finished | Done: {TestUrls.TikTokFile}_audio.mp3 (quiet)"), 5, "the notification");
+        Assert.DoesNotContain("Taskbar progress is unavailable", LogSince("using.log", usingLog));
     }
 
     [Fact]
