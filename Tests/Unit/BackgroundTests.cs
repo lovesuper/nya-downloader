@@ -39,7 +39,7 @@ public class BackdropTests
     public void Defaults_and_blur_scale()
     {
         var d = new BackgroundLook();
-        Assert.Equal((0, 43, 0, 100, 100, 100, 80, 0), (d.Gif, d.Visibility, d.Blur, d.Scale, d.Glass, d.Highlight, d.Frost, d.Ice));
+        Assert.Equal((0, 100, 0, 100, 100, 100, 64, 9, 60), (d.Gif, d.Visibility, d.Blur, d.Scale, d.Glass, d.Highlight, d.Frost, d.Ice, d.Backing));
         Assert.Equal((240, 72, 12), (Backdrop.FrameWidth(0), Backdrop.FrameWidth(40), Backdrop.FrameWidth(100)));
         var widths = Enumerable.Range(0, 101).Select(Backdrop.FrameWidth).ToList();
         Assert.True(widths.Zip(widths.Skip(1)).All(p => p.First >= p.Second), "more blur must never mean a bigger frame");
@@ -52,7 +52,7 @@ public class BackdropTests
     public void Visibility_blends_the_gif_with_white(int visibility, int low, int high)
     {
         using var black = Image(60, 80, (_, _) => Color.Black);
-        using var shown = Render(black, 200, 150, new BackgroundLook { Visibility = visibility, Glass = 0 });
+        using var shown = Render(black, 200, 150, new BackgroundLook { Visibility = visibility, Glass = 0, Ice = 0 });
         Assert.All(Pixels(shown), c => Assert.InRange(Gray(c), low, high));
     }
 
@@ -60,7 +60,7 @@ public class BackdropTests
     public void Fine_detail_is_blurred_away()
     {
         using var stripes = Image(480, 480, (x, y) => (x + y / 3) % 2 == 0 ? Color.Black : Color.White);
-        using var shown = Render(stripes, 780, 660, new BackgroundLook { Visibility = 50, Blur = 40, Glass = 0 });
+        using var shown = Render(stripes, 780, 660, new BackgroundLook { Visibility = 50, Blur = 40, Glass = 0, Ice = 0 });
         var values = Pixels(shown).Select(c => (int)c.G).ToList();
         Assert.True(values.Max() - values.Min() <= 4, $"stripes still show: {values.Min()}..{values.Max()}");
         Assert.InRange(values.Average(), 186, 196);
@@ -73,7 +73,7 @@ public class BackdropTests
     public void Blur_decides_how_sharp_shapes_are(int blur, int steepestMin, int steepestMax)
     {
         using var halves = Image(480, 480, (x, _) => x < 240 ? Color.Black : Color.White);
-        using var shown = Render(halves, 800, 800, new BackgroundLook { Visibility = 100, Blur = blur, Glass = 0 });
+        using var shown = Render(halves, 800, 800, new BackgroundLook { Visibility = 100, Blur = blur, Glass = 0, Ice = 0 });
         var row = Enumerable.Range(0, 800).Select(x => (int)shown.GetPixel(x, 400).G).ToList();
         Assert.True(row.Max() - row.Min() > 240, "the edge itself must survive");
         var steepest = row.Zip(row.Skip(1), (a, b) => Math.Abs(a - b)).Max();
@@ -109,9 +109,9 @@ public class BackdropTests
     public void Glass_bends_the_background_at_its_rim_and_leaves_the_rest_alone()
     {
         using var ramp = Image(400, 300, (x, _) => Color.FromArgb(x * 255 / 399, x * 255 / 399, x * 255 / 399));
-        var plainLook = new BackgroundLook { Visibility = 100, Blur = 0, Glass = 0, Highlight = 0, Frost = 0 };
+        var plainLook = new BackgroundLook { Visibility = 100, Blur = 0, Glass = 0, Highlight = 0, Frost = 0, Ice = 0 };
         using var plain = Render(ramp, 400, 300, plainLook, Panel);
-        using var glass = Render(ramp, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 100, Highlight = 0, Frost = 0 }, Panel);
+        using var glass = Render(ramp, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 100, Highlight = 0, Frost = 0, Ice = 0 }, Panel);
         foreach (var (x, y) in new[] { (10, 150), (395, 150), (200, 10), (200, 290), (46, 46), (200, 150), (120, 100), (280, 200) })
             Assert.True(Math.Abs(Gray(plain.GetPixel(x, y)) - Gray(glass.GetPixel(x, y))) <= 1, $"({x},{y}) changed but is outside the rim");
         Assert.True(Gray(glass.GetPixel(53, 150)) < Gray(plain.GetPixel(53, 150)) - 5, "the left rim should show what is further left");
@@ -122,7 +122,7 @@ public class BackdropTests
     public void Highlight_lights_the_top_left_rim_more_than_the_bottom_right()
     {
         using var gray = Image(400, 300, (_, _) => Color.FromArgb(100, 100, 100));
-        using var lit = Render(gray, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 50, Highlight = 100, Frost = 0 }, Panel);
+        using var lit = Render(gray, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 50, Highlight = 100, Frost = 0, Ice = 0 }, Panel);
         int topLeft = Enumerable.Range(48, 6).Max(y => Gray(lit.GetPixel(150, y)));
         int bottomRight = Enumerable.Range(246, 6).Max(y => Gray(lit.GetPixel(300, y)));
         Assert.True(topLeft > 160, $"the top rim is not lit: {topLeft}");
@@ -134,7 +134,7 @@ public class BackdropTests
     public void Frost_whitens_inside_the_glass_only()
     {
         using var black = Image(400, 300, (_, _) => Color.Black);
-        using var frosted = Render(black, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 30, Highlight = 0, Frost = 100 }, Panel);
+        using var frosted = Render(black, 400, 300, new BackgroundLook { Visibility = 100, Blur = 0, Glass = 30, Highlight = 0, Frost = 100, Ice = 0 }, Panel);
         Assert.InRange(Gray(frosted.GetPixel(200, 150)), 170, 190);
         Assert.InRange(Gray(frosted.GetPixel(20, 150)), 0, 2);
     }
@@ -143,7 +143,7 @@ public class BackdropTests
     public void Zero_glass_draws_no_glass()
     {
         using var ramp = Image(400, 300, (x, y) => Color.FromArgb(x * 255 / 399, y * 255 / 299, 128));
-        var look = new BackgroundLook { Glass = 0, Highlight = 100, Frost = 100 };
+        var look = new BackgroundLook { Visibility = 43, Glass = 0, Highlight = 100, Frost = 100, Ice = 0 };
         using var withPanels = Render(ramp, 400, 300, look, Panel);
         using var without = Render(ramp, 400, 300, look);
         Assert.Equal(Pixels(without).Select(c => c.ToArgb()), Pixels(withPanels).Select(c => c.ToArgb()));
@@ -164,7 +164,7 @@ public class BackdropTests
         Assert.InRange(small.Height, 200, 202);
 
         using var black = Image(100, 50, (_, _) => Color.Black);
-        using var shrunk = Render(black, 400, 400, new BackgroundLook { Visibility = 100, Scale = 50, Glass = 0 });
+        using var shrunk = Render(black, 400, 400, new BackgroundLook { Visibility = 100, Scale = 50, Glass = 0, Ice = 0 });
         Assert.Equal(255, Gray(shrunk.GetPixel(200, 20)));
         Assert.Equal(0, Gray(shrunk.GetPixel(200, 200)));
         Assert.Equal(255, Gray(shrunk.GetPixel(200, 380)));
@@ -228,6 +228,53 @@ public class BackdropTests
         Assert.True(Pixels(heavy).Count(c => Gray(c) > 235) > 2000, "no white cracks");
     }
 
+    static (double Mean, int Steepest) Stats(Bitmap b, Rectangle r)
+    {
+        double sum = 0;
+        int steepest = 0, n = 0;
+        for (int y = r.Top; y < r.Bottom; y++)
+            for (int x = r.Left; x < r.Right; x++)
+            {
+                Color c = b.GetPixel(x, y), next = b.GetPixel(x + 1, y);
+                sum += Gray(c);
+                n++;
+                steepest = Math.Max(steepest, Math.Abs(c.R - next.R) + Math.Abs(c.G - next.G) + Math.Abs(c.B - next.B));
+            }
+        return (sum / n, steepest);
+    }
+
+    [Fact]
+    public void Text_backing_is_a_light_frosted_patch_and_the_log_card_gets_a_rim()
+    {
+        using var stripes = Image(480, 270, (x, _) => x / 8 % 2 == 0 ? Color.Black : Color.White);
+        using var frame = Backdrop.Frame(stripes, 0);
+        var pill = new Rectangle(200, 60, 200, 50);
+        var card = new Rectangle(60, 160, 480, 140);
+        Bitmap Draw(int backing, bool withBackings = true)
+        {
+            var target = new Bitmap(600, 340, Backdrop.Format);
+            using var canvas = new BackdropCanvas(iceInBackground: false);
+            canvas.Render(target, frame, new BackgroundLook { Visibility = 100, Glass = 0, Frost = 0, Ice = 0, Highlight = 100, Backing = backing }, [], 1f,
+                          withBackings ? [new Backing(pill, 8), new Backing(card, 10, Card: true)] : null);
+            return target;
+        }
+        using var bare = Draw(0, withBackings: false);
+        using var off = Draw(0);
+        using var on = Draw(60);
+        Assert.True(Pixels(off).SequenceEqual(Pixels(bare)), "a zero backing must leave the background alone");
+        var inside = Rectangle.Inflate(pill, -10, -10);
+        var (offMean, offSteep) = Stats(off, inside);
+        var (onMean, onSteep) = Stats(on, inside);
+        Assert.True(offSteep > 150, $"the stripes should be sharp without a backing: {offSteep}");
+        Assert.True(onSteep < 12, $"the backing is not frosted: neighbours differ by {onSteep}");
+        Assert.True(onMean > offMean + 30, $"the backing is not lighter: {onMean:0} vs {offMean:0}");
+        Assert.True(Stats(on, new Rectangle(20, 20, 150, 30)).Steepest > 150, "the backing leaks outside its shape");
+        var (cardMean, cardSteep) = Stats(on, Rectangle.Inflate(card, -20, -20));
+        Assert.True(cardSteep < 12 && cardMean > offMean + 30, $"the log card is not frosted: {cardMean:0}, {cardSteep}");
+        var rim = Stats(on, new Rectangle(card.Left + 30, card.Top, card.Width - 60, 2)).Mean;
+        Assert.True(rim > cardMean + 15, $"no glass rim on the log card: {rim:0} vs {cardMean:0}");
+    }
+
     [Fact]
     public void Ice_is_built_in_the_background_and_announced()
     {
@@ -248,18 +295,19 @@ public class BackdropTests
     [Fact]
     public void Look_is_saved_with_the_settings_and_checked_on_load()
     {
-        var s = new Settings { Look = new BackgroundLook { Gif = 3, Visibility = 70, Blur = 10, Scale = 180, Glass = 0, Highlight = 5, Frost = 99, Ice = 40 } };
+        var s = new Settings { Look = new BackgroundLook { Gif = 3, Visibility = 70, Blur = 10, Scale = 180, Glass = 0, Highlight = 5, Frost = 99, Ice = 40, Backing = 25 } };
         var back = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(s))!;
-        Assert.Equal("gif 3, visibility 70%, blur 10, scale 180%, glass 0, highlight 5%, frost 99%, ice 40", back.Look.ToString());
-        Assert.Equal("gif random, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 80%, ice 0",
+        Assert.Equal("gif 3, visibility 70%, blur 10, scale 180%, glass 0, highlight 5%, frost 99%, ice 40, text backing 25%", back.Look.ToString());
+        Assert.Equal("gif random, visibility 100%, blur 0, scale 100%, glass 100, highlight 100%, frost 64%, ice 9, text backing 60%",
                      JsonSerializer.Deserialize<Settings>("{\"OutputDir\": \"x\"}")!.Look.ToString());
-        Assert.Equal("gif 6, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 80%, ice 0",
+        Assert.Equal("gif 6, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 80%, ice 9, text backing 60%",
                      JsonSerializer.Deserialize<Settings>("{\"Look\": {\"Gif\": 6, \"Visibility\": 43, \"Blur\": 0, \"Glass\": 100, \"Highlight\": 100, \"Frost\": 80}}")!.Look.ToString());
-        var wild = new BackgroundLook { Gif = 12, Visibility = 150, Blur = -5, Scale = 900, Glass = 101, Highlight = -1, Frost = 1000, Ice = -4 }.Checked(8);
-        Assert.Equal("gif 8, visibility 100%, blur 0, scale 250%, glass 100, highlight 0%, frost 100%, ice 0", wild.ToString());
+        var wild = new BackgroundLook { Gif = 12, Visibility = 150, Blur = -5, Scale = 900, Glass = 101, Highlight = -1, Frost = 1000, Ice = -4, Backing = 300 }.Checked(8);
+        Assert.Equal("gif 8, visibility 100%, blur 0, scale 250%, glass 100, highlight 0%, frost 100%, ice 0, text backing 100%", wild.ToString());
         Assert.Equal(50, new BackgroundLook { Scale = 0 }.Checked(8).Scale);
         Assert.Equal(0, new BackgroundLook { Gif = -3 }.Checked(8).Gif);
         Assert.Equal(0, new BackgroundLook { Gif = 2 }.Checked(0).Gif);
+        Assert.Equal(0, new BackgroundLook { Backing = -9 }.Checked(8).Backing);
     }
 }
 
@@ -283,7 +331,7 @@ public class LookDialogTests
             d.Changed += l => changes.Add(l.ToString());
             var start = (((ComboBox)C("lookGif")).SelectedItem!.ToString(), ((TrackBar)C("lookVisibility")).Value, ((TrackBar)C("lookFrost")).Value,
                          ((TrackBar)C("lookScale")).Minimum, ((TrackBar)C("lookScale")).Maximum, ((TrackBar)C("lookIce")).Minimum, ((TrackBar)C("lookIce")).Maximum);
-            var labels = string.Join(" ", new[] { "lookVisibilityValue", "lookBlurValue", "lookGlassValue", "lookHighlightValue", "lookFrostValue" }.Select(n => C(n).Text));
+            var labels = string.Join(" ", new[] { "lookVisibilityValue", "lookBlurValue", "lookGlassValue", "lookHighlightValue", "lookFrostValue", "lookBackingValue" }.Select(n => C(n).Text));
             ((TrackBar)C("lookGlass")).Value = 80;
             ((ComboBox)C("lookGif")).SelectedIndex = 0;
             Click(C("lookReset"));
@@ -291,13 +339,13 @@ public class LookDialogTests
             return (start, labels, changes, reset);
         });
         Assert.Equal(("2", 70, 99, 50, 250, 0, 100), start);
-        Assert.Equal("70% 10 0 5% 99%", labels);
+        Assert.Equal("70% 10 0 5% 99% 60%", labels);
         Assert.Equal(
-            ["gif 2, visibility 70%, blur 10, scale 100%, glass 80, highlight 5%, frost 99%, ice 0",
-             "gif random, visibility 70%, blur 10, scale 100%, glass 80, highlight 5%, frost 99%, ice 0",
-             "gif random, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 80%, ice 0"],
+            ["gif 2, visibility 70%, blur 10, scale 100%, glass 80, highlight 5%, frost 99%, ice 9, text backing 60%",
+             "gif random, visibility 70%, blur 10, scale 100%, glass 80, highlight 5%, frost 99%, ice 9, text backing 60%",
+             "gif random, visibility 100%, blur 0, scale 100%, glass 100, highlight 100%, frost 64%, ice 9, text backing 60%"],
             changes);
-        Assert.Equal(("gif random, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 80%, ice 0", "100"), reset);
+        Assert.Equal(("gif random, visibility 100%, blur 0, scale 100%, glass 100, highlight 100%, frost 64%, ice 9, text backing 60%", "100"), reset);
     }
 
     [Fact]

@@ -78,9 +78,11 @@ sealed class CaptionButton : Control
 
 sealed record GlassPanel(Rectangle Bounds, int Radius);
 
+sealed record Backing(Rectangle Bounds, int Radius, bool Card = false);
+
 static class Backdrop
 {
-    public const int SharpWidth = 240, BlurryWidth = 12;
+    public const int SharpWidth = 240, BlurryWidth = 12, FrostedWidth = 24;
     public const PixelFormat Format = PixelFormat.Format32bppPArgb;
 
     public static int FrameWidth(int blur) =>
@@ -151,14 +153,20 @@ static class Backdrop
         return new Rectangle((int)Math.Floor((size.Width - w) / 2), top, (int)Math.Ceiling(w) + 1, (int)Math.Ceiling(h) + 1);
     }
 
-    public static void Paint(Graphics g, Image frame, Size size, int visibility, int scalePercent = 100)
+    public static void Paint(Graphics g, Image frame, Size size, int visibility, int scalePercent = 100) =>
+        Paint(g, frame, Placement(frame.Size, size, scalePercent), size, visibility);
+
+    static void Paint(Graphics g, Image frame, Rectangle dest, Size size, int visibility)
     {
-        var dest = Placement(frame.Size, size, scalePercent);
         g.CompositingMode = CompositingMode.SourceCopy;
         g.CompositingQuality = CompositingQuality.HighSpeed;
         g.InterpolationMode = InterpolationMode.Bilinear;
         g.PixelOffsetMode = PixelOffsetMode.Half;
-        if (dest.Left > 0 || dest.Top > 0 || dest.Right < size.Width || dest.Bottom < size.Height) g.Clear(Color.White);
+        if (dest.Left > 0 || dest.Top > 0 || dest.Right < size.Width || dest.Bottom < size.Height)
+        {
+            using var paper = new SolidBrush(Color.White);
+            g.FillRectangle(paper, 0, 0, size.Width, size.Height);
+        }
         using (var wrap = new ImageAttributes())
         {
             wrap.SetWrapMode(WrapMode.TileFlipXY);
@@ -169,6 +177,60 @@ static class Backdrop
         g.CompositingMode = CompositingMode.SourceOver;
         using var white = new SolidBrush(Color.FromArgb(veil, 255, 255, 255));
         g.FillRectangle(white, 0, 0, size.Width, size.Height);
+    }
+
+    public static Bitmap Frosted(Image frame)
+    {
+        int w = Math.Clamp(FrostedWidth, 2, Math.Max(2, frame.Width));
+        int h = Math.Max(2, (int)Math.Round((double)frame.Height * w / frame.Width));
+        var bmp = new Bitmap(w, h, Format);
+        using (var g = Graphics.FromImage(bmp))
+        using (var wrap = new ImageAttributes())
+        {
+            wrap.SetWrapMode(WrapMode.TileFlipXY);
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.DrawImage(frame, new Rectangle(0, 0, w, h), 0, 0, frame.Width, frame.Height, GraphicsUnit.Pixel, wrap);
+        }
+        Soften(bmp);
+        return bmp;
+    }
+
+    public static int BackingAlpha(int backing) => (int)Math.Round(Math.Clamp(backing, 0, 100) * 1.8);
+
+    public static int MilkAlpha(BackgroundLook look)
+    {
+        double frost = Math.Clamp(look.Frost, 0, 100) * 1.8 / 255, backing = BackingAlpha(look.Backing) / 255.0;
+        return (int)Math.Round(255 * (1 - (1 - frost) * (1 - backing)));
+    }
+
+    public static void Back(Graphics g, Image frame, Size size, BackgroundLook look, IReadOnlyList<Backing> backings, float scale)
+    {
+        if (look.Backing <= 0 || backings.Count == 0) return;
+        using var area = new GraphicsPath(FillMode.Winding);
+        foreach (var b in backings)
+        {
+            using var shape = RoundedRect(b.Bounds, b.Radius);
+            area.AddPath(shape, false);
+        }
+        var state = g.Save();
+        using (var frosted = Frosted(frame))
+        {
+            g.SetClip(area);
+            Paint(g, frosted, Placement(frame.Size, size, look.Scale), size, look.Visibility);
+        }
+        g.Restore(state);
+        g.CompositingMode = CompositingMode.SourceOver;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        using var milk = new SolidBrush(Color.FromArgb(MilkAlpha(look), 255, 255, 255));
+        foreach (var b in backings)
+        {
+            using var shape = RoundedRect(b.Bounds, b.Radius);
+            g.FillPath(milk, shape);
+            if (b.Card) Decorate(g, new GlassPanel(b.Bounds, b.Radius), look, scale, frost: false);
+        }
     }
 
     public static GraphicsPath RoundedRect(RectangleF r, float radius)
@@ -184,17 +246,17 @@ static class Backdrop
         return path;
     }
 
-    public static void Decorate(Graphics g, GlassPanel panel, BackgroundLook look, float scale)
+    public static void Decorate(Graphics g, GlassPanel panel, BackgroundLook look, float scale, bool frost = true)
     {
         g.CompositingMode = CompositingMode.SourceOver;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         RectangleF r = panel.Bounds;
         r.Inflate(-0.5f, -0.5f);
         using var path = RoundedRect(r, panel.Radius);
-        if (look.Frost > 0)
+        if (frost && look.Frost > 0)
         {
-            using var frost = new SolidBrush(Color.FromArgb((int)Math.Round(look.Frost * 1.8), 255, 255, 255));
-            g.FillPath(frost, path);
+            using var milk = new SolidBrush(Color.FromArgb((int)Math.Round(look.Frost * 1.8), 255, 255, 255));
+            g.FillPath(milk, path);
         }
         if (look.Highlight > 0)
         {
@@ -515,7 +577,8 @@ sealed class BackdropCanvas(bool iceInBackground = true) : IDisposable
         return null;
     }
 
-    public void Render(Bitmap target, Image frame, BackgroundLook look, IReadOnlyList<GlassPanel> panels, float scale)
+    public void Render(Bitmap target, Image frame, BackgroundLook look, IReadOnlyList<GlassPanel> panels, float scale,
+                       IReadOnlyList<Backing>? backings = null)
     {
         var size = target.Size;
         bool glass = look.Glass > 0 && panels.Count > 0;
@@ -525,6 +588,7 @@ sealed class BackdropCanvas(bool iceInBackground = true) : IDisposable
         {
             using var g = Graphics.FromImage(target);
             Backdrop.Paint(g, frame, size, look.Visibility, look.Scale);
+            Backdrop.Back(g, frame, size, look, backings ?? [], scale);
             return;
         }
         if (_plain?.Size != size)
@@ -566,6 +630,7 @@ sealed class BackdropCanvas(bool iceInBackground = true) : IDisposable
             tg.CompositingMode = CompositingMode.SourceOver;
             tg.DrawImageUnscaled(_ice!.Overlay, 0, 0);
         }
+        Backdrop.Back(tg, frame, size, look, backings ?? [], scale);
     }
 
     static void Copy(Bitmap bmp, int[] pixels, bool toBitmap)
@@ -644,6 +709,7 @@ sealed class LookDialog : Form
         Slider("Glass highlight:", "lookHighlight", l => l.Highlight, (l, v) => l.Highlight = v, "%");
         Slider("Glass frost:", "lookFrost", l => l.Frost, (l, v) => l.Frost = v, "%");
         Slider("Ice:", "lookIce", l => l.Ice, (l, v) => l.Ice = v, "");
+        Slider("Text backing:", "lookBacking", l => l.Backing, (l, v) => l.Backing = v, "%");
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
         buttons.Controls.AddRange([_close, _reset]);
         grid.Controls.Add(buttons, 0, grid.RowCount++);
@@ -898,9 +964,29 @@ sealed class FieldBorder : Panel
     public override Size GetPreferredSize(Size proposedSize) =>
         new(Math.Max(Width, 40), _inner.PreferredSize.Height + Padding.Vertical);
 
+    public bool Glass { get; private set; }
+
+    public void MakeGlass()
+    {
+        SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+        BackColor = Color.Transparent;
+        Glass = true;
+        Invalidate();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        if (Glass)
+        {
+            if (!_inner.ContainsFocus) return;
+            float k = DeviceDpi / 96f;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var ring = Backdrop.RoundedRect(new RectangleF(1f, 1f, Width - 2.5f, Height - 2.5f), 10 * k - 1);
+            using var focus = new Pen(Color.FromArgb(170, FocusLine), Math.Max(1f, 1.5f * k));
+            e.Graphics.DrawPath(focus, ring);
+            return;
+        }
         using var pen = new Pen(_inner.ContainsFocus ? FocusLine : NormalLine);
         e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
     }

@@ -59,7 +59,7 @@ public class GuiUpdateTests
             ["new"] = Encoding.UTF8.GetBytes(ReleaseJson("v9.9.9", "https://example.com/NyaDownloader.exe")),
             ["old"] = Encoding.UTF8.GetBytes(ReleaseJson("v1.0.0", "https://example.com/NyaDownloader.exe")),
         }) { Delay = TimeSpan.FromSeconds(2) };
-        using (var app = new NyaApp(env: [("NYADOWNLOADER_UPDATES_URL", http.Url("new"))]))
+        using (var app = new NyaApp(s => s.Look = new BackgroundLook { Visibility = 43, Ice = 0 }, env: [("NYADOWNLOADER_UPDATES_URL", http.Url("new"))]))
         {
             app.WaitFor(() => app.Shown("appBanner"), 20, "the update banner");
             Assert.Equal($"NyaDownloader 9.9.9 is out (you have {AppVersion}).", app.Text("appUpdateText"));

@@ -15,6 +15,7 @@
     <Compile Include="..\Core.cs" Link="App\Core.cs" />
     <Compile Include="..\MainForm.cs" Link="App\MainForm.cs" />
     <Compile Include="..\Controls.cs" Link="App\Controls.cs" />
+    <Compile Include="..\LogView.cs" Link="App\LogView.cs" />
     <Using Include="System.IO" />
     <Using Include="System.Net.Http" />
   </ItemGroup>

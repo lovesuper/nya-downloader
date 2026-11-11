@@ -60,7 +60,7 @@ public sealed class MainForm : Form
     readonly Button _download = Btn("Download", 20), _cancel = Btn("Cancel"), _showFile = Btn("Show in folder"), _setup = Btn("Install components");
     readonly ProgressBar _progress = new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000, Height = 18 };
     readonly Label _status = new() { AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(3, 6, 3, 6) };
-    readonly TextBox _log = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 9f), BackColor = SystemColors.Window, BorderStyle = BorderStyle.None };
+    readonly LogView _log = new() { Dock = DockStyle.Fill, Font = new Font("Consolas", 9f) };
     readonly FieldBorder _urlBox, _outDirBox, _logBox, _fromBox, _toBox;
     readonly Label _engine = new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = DimColor, Margin = new Padding(3, 3, 0, 3) };
     readonly LinkLabel _update = Link("Update yt-dlp"), _errorLogLink = Link("Open error.log");
@@ -153,11 +153,22 @@ public sealed class MainForm : Form
         if (HasBackground)
         {
             foreach (var grid in new[] { fields, lower, titleBar }) MakeTransparent(grid);
+            _logBox.MakeGlass();
+            _log.BackColor = Color.Transparent;
+            _log.Padding = new Padding(4, 4, 0, 4);
+            _transparentControls.AddRange([_logBox, _log]);
             foreach (var c in OpaqueControls().Concat([fields, lower]))
             {
                 c.Move += (_, _) => BackgroundMoved();
                 c.Resize += (_, _) => BackgroundMoved();
                 c.VisibleChanged += (_, _) => BackgroundMoved();
+            }
+            foreach (var c in TextControls())
+            {
+                c.TextChanged += (_, _) => TextMoved();
+                c.SizeChanged += (_, _) => TextMoved();
+                c.LocationChanged += (_, _) => TextMoved();
+                c.VisibleChanged += (_, _) => TextMoved();
             }
         }
 
@@ -478,6 +489,14 @@ public sealed class MainForm : Form
         _backgroundStale = true;
         Invalidate(true);
     }
+
+    void TextMoved()
+    {
+        if (_backgroundCache == null || _backgroundStale) return;
+        _backgroundStale = true;
+        Invalidate(false);
+        foreach (var c in _transparentControls) c.Invalidate(false);
+    }
     bool HasBackground => _firstFrame != null;
 
     static string[] GifNames()
@@ -618,6 +637,50 @@ public sealed class MainForm : Form
         ];
     }
 
+    IEnumerable<Control> TextControls() =>
+        _transparentControls.Where(c => c is Label or RadioButton or CheckBox && c != _platform);
+
+    Rectangle InForm(Control c)
+    {
+        var r = c.Bounds;
+        for (var p = c.Parent; p != null && p != this; p = p.Parent) r.Offset(p.Location);
+        return r;
+    }
+
+    internal List<Backing> Backings()
+    {
+        float k = DeviceDpi / 96f;
+        int padX = (int)Math.Round(5 * k), padY = (int)Math.Round(1 * k), radius = (int)Math.Round(7 * k), touch = (int)Math.Round(2 * k);
+        var list = new List<Backing>();
+        if (_logBox.Glass && _logBox.Visible) list.Add(new Backing(InForm(_logBox), (int)Math.Round(10 * k), Card: true));
+        var pills = new List<Rectangle>();
+        foreach (var c in TextControls())
+        {
+            if (!c.Visible || c.Text.Length == 0 || c.Width <= 0 || c.Height <= 0) continue;
+            var r = InForm(c);
+            if (c is Label label)
+            {
+                var text = TextRenderer.MeasureText(label.Text, label.Font, new Size(Math.Max(1, label.Width - label.Padding.Horizontal), int.MaxValue),
+                                                    TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                r = new Rectangle(r.X + label.Padding.Left, r.Y, Math.Min(text.Width, r.Width), r.Height);
+            }
+            r.Inflate(padX, padY);
+            for (int i = 0; i < pills.Count; i++)
+            {
+                var p = pills[i];
+                int overlap = Math.Min(p.Bottom, r.Bottom) - Math.Max(p.Top, r.Top);
+                int gap = Math.Max(p.Left, r.Left) - Math.Min(p.Right, r.Right);
+                if (overlap * 2 < Math.Min(p.Height, r.Height) || gap > touch) continue;
+                r = Rectangle.Union(p, r);
+                pills.RemoveAt(i);
+                i = -1;
+            }
+            pills.Add(r);
+        }
+        list.AddRange(pills.Select(r => new Backing(r, radius)));
+        return list;
+    }
+
     static int[] FrameDelays(Image gif, int count)
     {
         var delays = Enumerable.Repeat(100, count).ToArray();
@@ -730,7 +793,7 @@ public sealed class MainForm : Form
             g.Clear(PageColor);
             return;
         }
-        _canvas.Render(_backgroundCache, frame, _settings.Look, GlassPanels(), DeviceDpi / 96f);
+        _canvas.Render(_backgroundCache, frame, _settings.Look, GlassPanels(), DeviceDpi / 96f, Backings());
     }
 
     Control[] OpaqueControls() =>
@@ -1511,7 +1574,8 @@ public sealed class MainForm : Form
     DateTime _runStarted, _lastProgressAt, _lastProgressLogAt;
     string _phase = "Preparing download";
     string? _fixedPhase;
-    int _progressLineStart = -1, _itemIndex, _itemCount;
+    int _itemIndex, _itemCount;
+    bool _progressLineOpen;
     static readonly Regex ExtractingRx = new(@"^\[[\w:]+\] Extracting URL: ", RegexOptions.Compiled);
 
     string ItemPrefix => _itemCount > 1 && _itemIndex > 0 ? $"Video {_itemIndex} of {_itemCount}: " : "";
@@ -1577,20 +1641,15 @@ public sealed class MainForm : Form
 
     void SetProgressLogLine(string text)
     {
-        if (_progressLineStart < 0 || _progressLineStart > _log.TextLength)
-        {
-            _progressLineStart = _log.TextLength;
-            _log.AppendText(text + Environment.NewLine);
-            return;
-        }
-        _log.Select(_progressLineStart, _log.TextLength - _progressLineStart);
-        _log.SelectedText = text + Environment.NewLine;
+        if (_progressLineOpen) _log.ReplaceLastLine(text);
+        else _log.AppendLine(text);
+        _progressLineOpen = true;
     }
 
     void ClearLog()
     {
         _log.Clear();
-        _progressLineStart = -1;
+        _progressLineOpen = false;
     }
 
     void OnOutput(string line)
@@ -1681,7 +1740,7 @@ public sealed class MainForm : Form
 
     void Log(string line)
     {
-        _progressLineStart = -1;
-        _log.AppendText(line + Environment.NewLine);
+        _progressLineOpen = false;
+        _log.AppendLine(line);
     }
 }

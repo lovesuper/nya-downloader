@@ -1263,13 +1263,14 @@ public sealed class BackgroundLook
     public const int MinScale = 50, MaxScale = 250;
 
     public int Gif { get; set; }
-    public int Visibility { get; set; } = 43;
+    public int Visibility { get; set; } = 100;
     public int Blur { get; set; }
     public int Scale { get; set; } = 100;
     public int Glass { get; set; } = 100;
     public int Highlight { get; set; } = 100;
-    public int Frost { get; set; } = 80;
-    public int Ice { get; set; }
+    public int Frost { get; set; } = 64;
+    public int Ice { get; set; } = 9;
+    public int Backing { get; set; } = 60;
 
     public BackgroundLook Clone() => (BackgroundLook)MemberwiseClone();
 
@@ -1278,14 +1279,14 @@ public sealed class BackgroundLook
         var c = Clone();
         c.Gif = Math.Clamp(c.Gif, 0, Math.Max(0, gifCount));
         c.Scale = Math.Clamp(c.Scale, MinScale, MaxScale);
-        (c.Visibility, c.Blur, c.Glass, c.Highlight, c.Frost, c.Ice) =
+        (c.Visibility, c.Blur, c.Glass, c.Highlight, c.Frost, c.Ice, c.Backing) =
             (Math.Clamp(c.Visibility, 0, 100), Math.Clamp(c.Blur, 0, 100), Math.Clamp(c.Glass, 0, 100), Math.Clamp(c.Highlight, 0, 100),
-             Math.Clamp(c.Frost, 0, 100), Math.Clamp(c.Ice, 0, 100));
+             Math.Clamp(c.Frost, 0, 100), Math.Clamp(c.Ice, 0, 100), Math.Clamp(c.Backing, 0, 100));
         return c;
     }
 
     public override string ToString() =>
-        $"gif {(Gif == 0 ? "random" : Gif.ToString())}, visibility {Visibility}%, blur {Blur}, scale {Scale}%, glass {Glass}, highlight {Highlight}%, frost {Frost}%, ice {Ice}";
+        $"gif {(Gif == 0 ? "random" : Gif.ToString())}, visibility {Visibility}%, blur {Blur}, scale {Scale}%, glass {Glass}, highlight {Highlight}%, frost {Frost}%, ice {Ice}, text backing {Backing}%";
 }
 
 public sealed class Settings

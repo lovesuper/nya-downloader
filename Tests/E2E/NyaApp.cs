@@ -32,7 +32,7 @@ sealed class NyaApp : IDisposable
     {
         exe ??= Exe;
         Assert.True(File.Exists(exe), $"Publish the app first (dotnet publish -c Release -o publish): {exe}");
-        var settings = new Settings { OutputDir = Out.Path, MaxHeight = 360 };
+        var settings = new Settings { OutputDir = Out.Path, MaxHeight = 360, Look = new BackgroundLook { Ice = 0 } };
         seed?.Invoke(settings);
         File.WriteAllText(Path.Combine(Data.Path, "settings.json"), JsonSerializer.Serialize(settings));
 

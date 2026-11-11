@@ -134,7 +134,7 @@ public class GuiTests
     [Fact]
     public void Background_is_a_half_visible_soft_blur()
     {
-        using var app = new NyaApp(s => s.Look = new BackgroundLook { Visibility = 50, Blur = 40 });
+        using var app = new NyaApp(s => s.Look = new BackgroundLook { Visibility = 50, Blur = 40, Frost = 80, Ice = 0 });
         Thread.Sleep(1500);
         using var shot = app.Screenshot();
         var download = app.RectInWindow(app.El("download"));
@@ -165,13 +165,13 @@ public class GuiTests
             Assert.True(app.CloseAndWait());
             return (shot, log, SavedSettings(app));
         }
-        var (plain, log, saved) = Run(new BackgroundLook { Gif = 1, Glass = 0, Highlight = 0, Frost = 0 });
-        var (glass, _, savedGlass) = Run(new BackgroundLook { Gif = 1, Glass = 100, Highlight = 100, Frost = 0 });
+        var (plain, log, saved) = Run(new BackgroundLook { Gif = 1, Visibility = 43, Glass = 0, Highlight = 0, Frost = 0, Ice = 0 });
+        var (glass, _, savedGlass) = Run(new BackgroundLook { Gif = 1, Visibility = 43, Glass = 100, Highlight = 100, Frost = 0, Ice = 0 });
         using (plain)
         using (glass)
         {
-            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 0, highlight 0%, frost 0%, ice 0", saved.Look.ToString());
-            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 0%, ice 0", savedGlass.Look.ToString());
+            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 0, highlight 0%, frost 0%, ice 0, text backing 60%", saved.Look.ToString());
+            Assert.Equal("gif 1, visibility 43%, blur 0, scale 100%, glass 100, highlight 100%, frost 0%, ice 0, text backing 60%", savedGlass.Look.ToString());
             int changed = 0, brightest = 0, brightestPlain = 0;
             for (int y = log.Top + 20; y < log.Bottom - 20; y += 2)
                 for (int x = 0; x < log.Left - 2; x++)
@@ -188,11 +188,58 @@ public class GuiTests
     }
 
     [Fact]
+    public void Text_gets_a_light_backing_and_the_log_is_frosted_glass()
+    {
+        (Bitmap Shot, Rectangle Log, Rectangle Engine) Run(int backing)
+        {
+            using var app = new NyaApp(s => s.Look = new BackgroundLook { Gif = 4, Visibility = 100, Glass = 0, Frost = 0, Ice = 0, Backing = backing });
+            app.WaitFor(() => app.Text("engine").StartsWith("yt-dlp "), 30, "the engine line");
+            Thread.Sleep(1000);
+            var shot = app.Screenshot();
+            var log = app.RectInWindow(app.El("logBox"));
+            var engine = app.RectInWindow(app.El("engine"));
+            Assert.True(app.CloseAndWait());
+            Assert.Equal(backing, SavedSettings(app).Look.Backing);
+            return (shot, log, engine);
+        }
+        static (int Lightest, int Darkest, int Steepest) Measure(Bitmap b, Rectangle r)
+        {
+            int lightest = 0, darkest = 255, steepest = 0;
+            for (int y = r.Top; y < r.Bottom; y++)
+                for (int x = r.Left; x < r.Right; x++)
+                {
+                    Color c = b.GetPixel(x, y), next = b.GetPixel(x + 1, y);
+                    int low = Math.Min(c.R, Math.Min(c.G, c.B));
+                    (lightest, darkest) = (Math.Max(lightest, low), Math.Min(darkest, low));
+                    steepest = Math.Max(steepest, Math.Abs(c.R - next.R) + Math.Abs(c.G - next.G) + Math.Abs(c.B - next.B));
+                }
+            return (lightest, darkest, steepest);
+        }
+        var (bare, log, engine) = Run(0);
+        var (backed, _, _) = Run(100);
+        using (bare)
+        using (backed)
+        {
+            var inside = Rectangle.Inflate(log, -24, -24);
+            var (_, bareDark, bareSteep) = Measure(bare, inside);
+            var (_, logDark, logSteep) = Measure(backed, inside);
+            Assert.True(bareDark < 150, $"the GIF should show through a log without backing (darkest {bareDark})");
+            Assert.True(logDark >= 170, $"the log backing is not light enough: darkest {logDark}");
+            Assert.True(logSteep < 16 && logSteep < bareSteep / 2, $"the log is not frosted: {logSteep} vs {bareSteep}");
+            var pad = new Rectangle(engine.Left - 7, engine.Top + 3, 4, engine.Height - 6);
+            var (_, padBare, _) = Measure(bare, pad);
+            var (_, padBacked, _) = Measure(backed, pad);
+            Assert.True(padBare < 170, $"the GIF next to the engine line is already light ({padBare})");
+            Assert.True(padBacked >= 170, $"the engine line has no light backing: darkest {padBacked}");
+        }
+    }
+
+    [Fact]
     public void Ice_frosts_the_window_edges_from_the_saved_settings()
     {
         (Bitmap Shot, Rectangle Log) Run(int ice)
         {
-            using var app = new NyaApp(s => s.Look = new BackgroundLook { Gif = 1, Glass = 0, Ice = ice });
+            using var app = new NyaApp(s => s.Look = new BackgroundLook { Gif = 1, Visibility = 43, Frost = 80, Glass = 0, Ice = ice });
             Thread.Sleep(ice > 0 ? 6000 : 1500);
             var shot = app.Screenshot();
             var log = app.RectInWindow(app.El("logBox"));
