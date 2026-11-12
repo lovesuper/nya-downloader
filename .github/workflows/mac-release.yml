@@ -1,0 +1,39 @@
+name: macOS build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release to attach the macOS build to
+        required: true
+      ref:
+        description: What to build (a branch, tag or commit)
+        required: true
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-15
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build NyaDownloader.app for Apple Silicon and Intel
+        run: bash Mac/build-mac.sh
+
+      - name: Attach the zips to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" publish/mac/NyaDownloader-mac-arm64.zip publish/mac/NyaDownloader-mac-x64.zip --clobber
